@@ -10,6 +10,7 @@ class KylieMailApp : Application() {
         super.onCreate()
         container = AppContainer(this)
         container.notifier.createChannels()
+        container.settings.applyThemeMode()
         if (container.credentials.account.value != null) {
             container.syncScheduler.schedulePeriodic()
         }

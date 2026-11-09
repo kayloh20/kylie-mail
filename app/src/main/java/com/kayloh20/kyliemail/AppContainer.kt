@@ -5,6 +5,7 @@ import com.kayloh20.kyliemail.data.MailActions
 import com.kayloh20.kyliemail.data.MailRepository
 import com.kayloh20.kyliemail.data.MoveHistory
 import com.kayloh20.kyliemail.data.notify.MailNotifier
+import com.kayloh20.kyliemail.data.settings.AppSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,6 +21,7 @@ import com.kayloh20.kyliemail.data.sync.SyncScheduler
 class AppContainer(context: Context) {
     val database = MailDatabase.create(context)
     val credentials = CredentialStore(context)
+    val settings = AppSettings(context)
     val connector = ImapConnector()
     val inlineImages = InlineImageStore(context.filesDir)
     val imageTrust = ImageTrust(context)

@@ -13,7 +13,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.activity.SystemBarStyle
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import com.kayloh20.kyliemail.data.settings.ThemeMode
+import com.kayloh20.kyliemail.ui.settings.SettingsDialog
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
@@ -42,7 +49,20 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
 
         setContent {
-            KylieMailTheme {
+            val themeMode by container.settings.themeMode.collectAsStateWithLifecycle()
+            val dark = when (themeMode) {
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+            }
+            // Status and navigation bar icons follow the app's mode, not only the system's.
+            LaunchedEffect(dark) {
+                val style = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT) { dark }
+                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+            }
+            var showSettings by rememberSaveable { mutableStateOf(false) }
+
+            KylieMailTheme(darkTheme = dark) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.surface,
@@ -66,8 +86,22 @@ class MainActivity : ComponentActivity() {
                                 viewModel = vm,
                                 openRequest = openRequest,
                                 onOpenRequestHandled = { openRequests.value = null },
+                                onOpenSettings = { showSettings = true },
                                 modifier = Modifier.safeDrawingPadding(),
                             )
+                            if (showSettings) {
+                                SettingsDialog(
+                                    themeMode = themeMode,
+                                    onThemeModeChange = container.settings::setThemeMode,
+                                    accountEmail = signedIn.email,
+                                    onSignOut = {
+                                        showSettings = false
+                                        vm.signOut()
+                                    },
+                                    versionName = versionName(),
+                                    onDismiss = { showSettings = false },
+                                )
+                            }
                         }
                     }
                 }
@@ -96,6 +130,7 @@ class MainActivity : ComponentActivity() {
                 listOf(
                     KeyboardShortcutInfo("Move to folder", KeyEvent.KEYCODE_M, ctrl or shift),
                     KeyboardShortcutInfo("Go to folder", KeyEvent.KEYCODE_K, ctrl),
+                    KeyboardShortcutInfo("Settings", KeyEvent.KEYCODE_COMMA, ctrl),
                     KeyboardShortcutInfo("Undo", KeyEvent.KEYCODE_Z, ctrl),
                     KeyboardShortcutInfo("Select all", KeyEvent.KEYCODE_A, ctrl),
                     KeyboardShortcutInfo("Delete", KeyEvent.KEYCODE_FORWARD_DEL, 0),
@@ -108,6 +143,9 @@ class MainActivity : ComponentActivity() {
         )
         super.onProvideKeyboardShortcuts(data, menu, deviceId)
     }
+
+    private fun versionName(): String =
+        runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull().orEmpty()
 
     private fun handleIntent(intent: Intent?) {
         if (intent?.action != ACTION_OPEN_MESSAGE) return

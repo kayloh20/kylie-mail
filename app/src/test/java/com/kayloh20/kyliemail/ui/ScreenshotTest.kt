@@ -1,6 +1,11 @@
 package com.kayloh20.kyliemail.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import com.kayloh20.kyliemail.data.settings.ThemeMode
+import com.kayloh20.kyliemail.ui.settings.SettingsContent
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -82,6 +87,32 @@ class ScreenshotTest {
     @Test
     fun mailScreenLight() = mailScreen("build/screenshots/mail-light.png", dark = false)
 
+    @Test
+    fun settingsDark() = settings("build/screenshots/settings-dark.png", dark = true)
+
+    @Test
+    fun settingsLight() = settings("build/screenshots/settings-light.png", dark = false)
+
+    private fun settings(path: String, dark: Boolean) {
+        captureRoboImage(path) {
+            KylieMailTheme(darkTheme = dark) {
+                Box(
+                    Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)).background(MaterialTheme.colorScheme.background.copy(alpha = 0.6f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    SettingsContent(
+                        themeMode = if (dark) ThemeMode.DARK else ThemeMode.SYSTEM,
+                        onThemeModeChange = {},
+                        accountEmail = "kylie@icloud.com",
+                        onSignOut = {},
+                        versionName = "0.1.0",
+                        onDismiss = {},
+                    )
+                }
+            }
+        }
+    }
+
     private fun mailScreen(path: String, dark: Boolean) {
         val store = InlineImageStore(Files.createTempDirectory("inline").toFile())
         captureRoboImage(path) {
@@ -108,6 +139,7 @@ class ScreenshotTest {
                             onRefresh = {},
                             onSignOut = {},
                             onOpenFolders = null,
+                            onOpenSettings = {},
                             modifier = Modifier.width(400.dp).fillMaxHeight(),
                         )
                         PaneDivider(onDrag = {})

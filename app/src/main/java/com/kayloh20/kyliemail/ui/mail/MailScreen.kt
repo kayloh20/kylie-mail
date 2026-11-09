@@ -60,6 +60,7 @@ fun MailScreen(
     viewModel: MailViewModel,
     openRequest: Long?,
     onOpenRequestHandled: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val folders by viewModel.folders.collectAsStateWithLifecycle()
@@ -128,6 +129,7 @@ fun MailScreen(
             when {
                 ctrl && shift && event.key == Key.M -> { viewModel.openMovePicker(); true }
                 ctrl && event.key == Key.K -> { viewModel.openGoToPicker(); true }
+                ctrl && event.key == Key.Comma -> { onOpenSettings(); true }
                 ctrl && event.key == Key.Z -> { viewModel.undo(); true }
                 ctrl && event.key == Key.A -> { viewModel.selectAll(); true }
                 ctrl -> false
@@ -179,6 +181,7 @@ fun MailScreen(
         },
         onRefresh = viewModel::refresh,
         onSignOut = viewModel::signOut,
+        onOpenSettings = onOpenSettings,
         onOpenFolders = if (showMenu) ({ scope.launch { drawerState.open() } }) else null,
         modifier = paneModifier,
     )

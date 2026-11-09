@@ -89,6 +89,7 @@ fun MessageListPane(
     onRefresh: () -> Unit,
     onSignOut: () -> Unit,
     onOpenFolders: (() -> Unit)?,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -115,6 +116,13 @@ fun MessageListPane(
                 Box {
                     TooltipIconButton(Icons.Outlined.MoreVert, "More", { menuOpen = true })
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Settings") },
+                            trailingIcon = {
+                                Text("Ctrl+,", style = MaterialTheme.typography.labelMedium, color = KylieTheme.colors.textMuted)
+                            },
+                            onClick = { menuOpen = false; onOpenSettings() },
+                        )
                         DropdownMenuItem(text = { Text("Sign out") }, onClick = { menuOpen = false; onSignOut() })
                     }
                 }
