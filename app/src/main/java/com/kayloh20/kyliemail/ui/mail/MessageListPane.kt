@@ -57,6 +57,7 @@ import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -110,8 +111,10 @@ fun MessageListPane(
     onOpenSettings: () -> Unit,
     onNewMessage: () -> Unit,
     touch: TouchActions,
+    search: SearchUi? = null,
     modifier: Modifier = Modifier,
 ) {
+    val searching = search?.state != null
     var menuOpen by remember { mutableStateOf(false) }
     // The pull indicator only shows for refreshes started by pulling; others use the bar under the title.
     var pulled by remember { mutableStateOf(false) }
@@ -133,6 +136,8 @@ fun MessageListPane(
     Column(modifier) {
         if (touch.selecting) {
             SelectionBar(touch)
+        } else if (searching) {
+            SearchHeader(search!!)
         } else TopAppBar(
             title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             navigationIcon = {
@@ -143,6 +148,7 @@ fun MessageListPane(
             actions = {
                 // Without the folder sidebar, New message lives here.
                 if (onOpenFolders != null) TooltipIconButton(Icons.Outlined.Edit, "New message (Ctrl+N)", onNewMessage)
+                if (search != null) TooltipIconButton(Icons.Outlined.Search, "Search (Ctrl+F)", search.onOpen)
                 TooltipIconButton(Icons.Outlined.Refresh, "Refresh", onRefresh, enabled = !syncState.running)
                 Box {
                     TooltipIconButton(Icons.Outlined.MoreVert, "More", { menuOpen = true })
@@ -183,7 +189,12 @@ fun MessageListPane(
                     item(key = "empty") {
                         Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
                             Text(
-                                if (syncState.running) "Checking iCloud…" else "No messages",
+                                when {
+                                    searching && search!!.state!!.text.isBlank() -> "Type to search every folder on this device"
+                                    searching -> "No matches on this device"
+                                    syncState.running -> "Checking iCloud…"
+                                    else -> "No messages"
+                                },
                                 color = KylieTheme.colors.textMuted,
                             )
                         }
@@ -200,11 +211,14 @@ fun MessageListPane(
                                 onContextMenu = { onContextMenu(message.id) },
                                 onLongPress = { touch.onLongPress(message.id) },
                                 contextMenu = contextMenu,
+                                // Results from every folder say which folder they're in.
+                                folderLabel = if (searching && search!!.state!!.allFolders) search.folderNames[message.folderId] else null,
                             )
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     }
                 }
+                if (searching) item(key = "server-search") { ServerSearchFooter(search!!) }
             }
         }
     }
@@ -339,6 +353,7 @@ private fun MessageRow(
     onContextMenu: () -> Unit,
     onLongPress: () -> Unit,
     contextMenu: @Composable (message: MessageSummary, close: () -> Unit) -> Unit,
+    folderLabel: String? = null,
 ) {
     val unread = !message.isSeen
     val background = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
@@ -420,6 +435,14 @@ private fun MessageRow(
                 if (message.isFlagged) {
                     Icon(Icons.Filled.Flag, contentDescription = "Flagged", tint = KylieTheme.colors.warning, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
+                }
+                if (folderLabel != null) {
+                    Text(
+                        "$folderLabel · ",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                    )
                 }
                 Text(
                     formatListDate(message.receivedAt),

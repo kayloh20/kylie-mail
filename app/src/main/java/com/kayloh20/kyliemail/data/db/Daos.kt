@@ -48,11 +48,33 @@ interface FolderDao {
 interface MessageDao {
     @Query(
         """
-        SELECT id, uid, subject, fromName, fromAddress, preview, receivedAt, isSeen, isFlagged, hasAttachments
+        SELECT id, uid, subject, fromName, fromAddress, preview, receivedAt, isSeen, isFlagged, hasAttachments, folderId
         FROM messages WHERE folderId = :folderId ORDER BY receivedAt DESC, uid DESC
         """,
     )
     fun observeSummaries(folderId: Long): Flow<List<MessageSummary>>
+
+    /** Messages matching a full-text [query] (see SearchQuery), newest first, in one folder or all. */
+    @Query(
+        """
+        SELECT m.id, m.uid, m.subject, m.fromName, m.fromAddress, m.preview, m.receivedAt, m.isSeen, m.isFlagged, m.hasAttachments, m.folderId
+        FROM messages AS m JOIN message_search ON message_search.rowid = m.id
+        WHERE message_search MATCH :query AND (:folderId IS NULL OR m.folderId = :folderId)
+        ORDER BY m.receivedAt DESC LIMIT :limit
+        """,
+    )
+    fun search(query: String, folderId: Long?, limit: Int): Flow<List<MessageSummary>>
+
+    @Query(
+        """
+        SELECT id, uid, subject, fromName, fromAddress, preview, receivedAt, isSeen, isFlagged, hasAttachments, folderId
+        FROM messages WHERE id IN (:ids)
+        """,
+    )
+    fun observeSummariesByIds(ids: List<Long>): Flow<List<MessageSummary>>
+
+    @Query("SELECT id FROM messages WHERE folderId = :folderId AND uid IN (:uids)")
+    suspend fun idsForUids(folderId: Long, uids: List<Long>): List<Long>
 
     @Query("SELECT * FROM messages WHERE id = :id")
     fun observe(id: Long): Flow<MessageEntity?>
@@ -63,8 +85,9 @@ interface MessageDao {
     @Query("SELECT id FROM messages")
     suspend fun allIds(): List<Long>
 
-    @Query("SELECT uid, isSeen, isFlagged, isAnswered FROM messages WHERE folderId = :folderId")
-    suspend fun localFlags(folderId: Long): List<LocalFlags>
+    /** The newest cached messages' flags. Older ones, such as search results, aren't re-checked every sync. */
+    @Query("SELECT uid, isSeen, isFlagged, isAnswered FROM messages WHERE folderId = :folderId ORDER BY uid DESC LIMIT :limit")
+    suspend fun localFlags(folderId: Long, limit: Int): List<LocalFlags>
 
     @Query("SELECT * FROM messages WHERE folderId = :folderId AND bodyLoaded = 0 ORDER BY receivedAt DESC LIMIT :limit")
     suspend fun withoutBody(folderId: Long, limit: Int): List<MessageEntity>

@@ -37,10 +37,28 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.debounce
+import com.kayloh20.kyliemail.data.search.SearchQuery
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/** What the search box holds. */
+data class SearchState(
+    val text: String = "",
+    val allFolders: Boolean = true,
+    /** Matches iCloud found that weren't on the device. */
+    val serverHits: Set<Long> = emptySet(),
+    val server: ServerSearchState = ServerSearchState.Idle,
+)
+
+sealed interface ServerSearchState {
+    data object Idle : ServerSearchState
+    data class Running(val done: Int, val total: Int) : ServerSearchState
+    data class Done(val found: Int) : ServerSearchState
+    data class Failed(val message: String) : ServerSearchState
+}
 
 /** Which folder picker is open: moving the selection, or jumping to a folder. */
 enum class PickerMode { MOVE, GO_TO }
@@ -56,7 +74,7 @@ data class Notice(
     val canUndo: Boolean get() = undo != null || unsendDraftId != null
 }
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, kotlinx.coroutines.FlowPreview::class)
 class MailViewModel(
     private val repository: MailRepository,
     private val filing: FilingEngine,
@@ -71,8 +89,86 @@ class MailViewModel(
     private val _selectedFolderId = MutableStateFlow<Long?>(null)
     val selectedFolderId: StateFlow<Long?> = _selectedFolderId.asStateFlow()
 
-    val messages: StateFlow<List<MessageSummary>> = _selectedFolderId
-        .flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repository.messages(id) }
+    // Search
+
+    private val _search = MutableStateFlow<SearchState?>(null)
+
+    /** The search box's contents and results, or null when not searching. */
+    val search: StateFlow<SearchState?> = _search.asStateFlow()
+
+    private val searchResults: StateFlow<List<MessageSummary>> = _search
+        .map { state -> state?.let { Triple(it.text, if (it.allFolders) null else _selectedFolderId.value, it.serverHits) } }
+        .distinctUntilChanged()
+        .debounce(120)
+        .flatMapLatest { key ->
+            if (key == null) {
+                flowOf(emptyList())
+            } else {
+                val (text, folder, serverHits) = key
+                // Matches on the device, plus what iCloud found that the index can't see yet (bodies not downloaded).
+                combine(repository.search(SearchQuery.parse(text), folder), repository.summaries(serverHits)) { local, remote ->
+                    (local + remote.filter { folder == null || it.folderId == folder })
+                        .distinctBy { it.id }
+                        .sortedByDescending { it.receivedAt }
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun openSearch() {
+        if (_search.value == null) _search.value = SearchState()
+    }
+
+    fun setSearchText(text: String) {
+        val current = _search.value ?: SearchState()
+        // New words mean an earlier iCloud search no longer applies.
+        _search.value = current.copy(text = text, serverHits = emptySet(), server = ServerSearchState.Idle)
+        serverSearchJob?.cancel()
+    }
+
+    fun setSearchAllFolders(all: Boolean) {
+        _search.value = _search.value?.copy(allFolders = all, serverHits = emptySet(), server = ServerSearchState.Idle)
+    }
+
+    fun closeSearch() {
+        serverSearchJob?.cancel()
+        _search.value = null
+        _selection.value = Selection()
+    }
+
+    private var serverSearchJob: kotlinx.coroutines.Job? = null
+
+    /** Searches iCloud itself for older mail that isn't on the device. */
+    fun searchServer() {
+        val state = _search.value ?: return
+        val query = SearchQuery.parse(state.text)
+        if (query.serverTerms.isEmpty()) return
+        val all = folders.value.filter { it.selectable }
+        val targets = if (state.allFolders) all else all.filter { it.id == _selectedFolderId.value }
+        serverSearchJob?.cancel()
+        serverSearchJob = viewModelScope.launch {
+            update { it.copy(server = ServerSearchState.Running(0, targets.size)) }
+            try {
+                val found = repository.searchServer(query, targets) { done, total ->
+                    update { it.copy(server = ServerSearchState.Running(done, total)) }
+                }
+                update { it.copy(serverHits = it.serverHits + found, server = ServerSearchState.Done(found.size)) }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                update { it.copy(server = ServerSearchState.Failed(e.message ?: "Couldn't reach iCloud.")) }
+            }
+        }
+    }
+
+    private fun update(change: (SearchState) -> SearchState) {
+        _search.value = _search.value?.let(change)
+    }
+
+    val messages: StateFlow<List<MessageSummary>> = combine(
+        _selectedFolderId.flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repository.messages(id) },
+        _search,
+        searchResults,
+    ) { folder, search, results -> if (search == null || search.text.isBlank()) folder else results }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val _selection = MutableStateFlow(Selection())
@@ -174,6 +270,8 @@ class MailViewModel(
         if (_selectedFolderId.value == id) return
         _selectedFolderId.value = id
         _selection.value = Selection()
+        // Picking a folder while searching it alone narrows to that folder.
+        if (_search.value?.allFolders == false) update { it.copy(serverHits = emptySet(), server = ServerSearchState.Idle) }
         viewModelScope.launch { repository.refreshFolder(id) }
     }
 

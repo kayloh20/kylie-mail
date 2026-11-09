@@ -11,6 +11,10 @@ import com.kayloh20.kyliemail.ui.settings.SendingSettings
 import com.kayloh20.kyliemail.ui.mail.WritingActions
 import com.kayloh20.kyliemail.ui.mail.FileActions
 import com.kayloh20.kyliemail.ui.mail.TouchActions
+import com.kayloh20.kyliemail.ui.mail.SearchUi
+import com.kayloh20.kyliemail.ui.mail.SearchState
+import androidx.compose.runtime.remember
+import androidx.compose.ui.focus.FocusRequester
 import com.kayloh20.kyliemail.ui.mail.RemoteImagesBanner
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.height
@@ -212,6 +216,47 @@ class ScreenshotTest {
     fun phonePickingMessages() = captureRoboImage("build/screenshots/phone-selecting.png") {
         KylieMailTheme(darkTheme = true) {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) { phoneList(true, Modifier.fillMaxSize()) }
+        }
+    }
+
+    /** Searching every folder on a phone, with results labelled by folder. */
+    @Test
+    @Config(qualifiers = "w411dp-h891dp-xxhdpi")
+    fun phoneSearch() = captureRoboImage("build/screenshots/phone-search.png") {
+        KylieMailTheme(darkTheme = false) {
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                MessageListPane(
+                    title = "Inbox",
+                    messages = listOf(
+                        summary(2, "Madison Clarke", "Cheer practice moved to 4pm", "Hey! Coach said the gym is booked so we're moving practice to 4.", 45, seen = true),
+                        summary(7, "Coach Rivera", "Cheer competition schedule", "Buses leave at 6am sharp. Bring your uniform and the good snacks.", 60 * 48, seen = true),
+                        summary(8, "Madison Clarke", "Re: Cheer fundraiser", "We raised \$1,240!! Thank you all so much.", 60 * 24 * 9, seen = true),
+                    ).mapIndexed { i, m -> m.copy(folderId = listOf(1L, 10L, 4L)[i]) },
+                    selectedIds = emptySet(),
+                    cursorId = null,
+                    syncState = SyncState(),
+                    listState = rememberLazyListState(),
+                    onClick = { _, _, _ -> },
+                    onContextMenu = {},
+                    contextMenu = { _, _ -> },
+                    onRefresh = {},
+                    onSignOut = {},
+                    onOpenFolders = {},
+                    onOpenSettings = {},
+                    onNewMessage = {},
+                    touch = touch(selecting = false, swipes = true),
+                    search = SearchUi(
+                        state = SearchState(text = "cheer"),
+                        folderName = "Inbox",
+                        resultCount = 3,
+                        folderNames = folders.associate { it.id to it.displayName },
+                        focusRequester = remember { FocusRequester() },
+                        onOpen = {}, onTextChange = {}, onClose = {}, onAllFoldersChange = {},
+                        onSearchServer = {}, onFocusChange = {}, onSubmit = {},
+                    ),
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
     }
 

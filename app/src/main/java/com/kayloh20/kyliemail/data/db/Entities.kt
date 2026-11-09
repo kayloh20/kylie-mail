@@ -3,6 +3,8 @@ package com.kayloh20.kyliemail.data.db
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Fts4
+import androidx.room.FtsOptions
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.kayloh20.kyliemail.data.mail.FolderRole
@@ -75,6 +77,7 @@ data class MessageSummary(
     val isSeen: Boolean,
     val isFlagged: Boolean,
     val hasAttachments: Boolean,
+    val folderId: Long = 0,
 )
 
 data class LocalFlags(
@@ -218,4 +221,18 @@ data class DraftAttachmentEntity(
     val size: Long,
     /** Absolute path of the app's copy. */
     val path: String,
+)
+
+/**
+ * The full-text search index: one row per cached message, keyed by the message's id. SQL triggers
+ * (see [SearchIndex]) keep it in step with the messages table, so it can't drift.
+ */
+@Fts4(tokenizer = FtsOptions.TOKENIZER_UNICODE61, tokenizerArgs = ["remove_diacritics=1"])
+@Entity(tableName = "message_search")
+data class MessageSearchEntity(
+    @PrimaryKey @ColumnInfo(name = "rowid") val rowId: Long,
+    val subject: String,
+    val sender: String,
+    val recipients: String,
+    val body: String,
 )

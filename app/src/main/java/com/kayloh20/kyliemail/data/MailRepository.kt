@@ -15,8 +15,13 @@ import com.kayloh20.kyliemail.data.sync.UserAction
 import com.kayloh20.kyliemail.data.sync.SyncState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import com.kayloh20.kyliemail.data.search.SearchQuery
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
+
+private const val SEARCH_LIMIT = 300
+private const val SERVER_RESULTS_PER_FOLDER = 50
 
 class MailRepository(
     private val db: MailDatabase,
@@ -57,6 +62,17 @@ class MailRepository(
     fun messages(folderId: Long): Flow<List<MessageSummary>> = db.messages().observeSummaries(folderId)
 
     fun message(id: Long): Flow<MessageEntity?> = db.messages().observe(id)
+
+    /** Messages on the device matching [query], in [folderId] or everywhere. */
+    fun search(query: SearchQuery, folderId: Long?): Flow<List<MessageSummary>> =
+        query.fts?.let { db.messages().search(it, folderId, SEARCH_LIMIT) } ?: flowOf(emptyList())
+
+    fun summaries(ids: Collection<Long>): Flow<List<MessageSummary>> =
+        if (ids.isEmpty()) flowOf(emptyList()) else db.messages().observeSummariesByIds(ids.toList())
+
+    /** Asks iCloud to search [folders] for mail not on the device yet; returns the matches' ids. */
+    suspend fun searchServer(query: SearchQuery, folders: List<FolderEntity>, onProgress: (Int, Int) -> Unit): List<Long> =
+        syncEngine.searchServer(query.serverTerms, folders, SERVER_RESULTS_PER_FOLDER, onProgress)
 
     fun attachments(messageId: Long): Flow<List<com.kayloh20.kyliemail.data.db.AttachmentEntity>> = db.attachments().observeFor(messageId)
 

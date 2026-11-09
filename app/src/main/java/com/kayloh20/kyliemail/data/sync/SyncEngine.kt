@@ -18,6 +18,9 @@ import com.kayloh20.kyliemail.data.db.AttachmentEntity
 import com.kayloh20.kyliemail.data.mail.makePreview
 import com.sun.mail.imap.IMAPFolder
 import com.sun.mail.imap.IMAPStore
+import com.sun.mail.imap.protocol.IMAPProtocol
+import com.kayloh20.kyliemail.data.search.SearchQuery
+import com.kayloh20.kyliemail.data.search.ServerSearch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -192,6 +195,52 @@ class SyncEngine(
             }
         }
         return current
+    }
+
+    /**
+     * Asks iCloud to search each folder and caches the newest matches, so mail that isn't on the
+     * device yet can be found. Returns the local ids of every match. Calls the server's SEARCH
+     * directly: the library's own search would download a whole folder if the server refused.
+     */
+    suspend fun searchServer(
+        terms: List<SearchQuery.ServerTerm>,
+        folders: List<FolderEntity>,
+        perFolder: Int,
+        onProgress: (done: Int, total: Int) -> Unit,
+    ): List<Long> {
+        val term = ServerSearch.term(terms) ?: return emptyList()
+        val found = mutableListOf<Long>()
+        useConnection { store ->
+            for ((index, folder) in folders.withIndex()) {
+                onProgress(index, folders.size)
+                val remote = store.getFolder(folder.fullName) as IMAPFolder
+                if (!remote.exists()) continue
+                remote.open(Folder.READ_ONLY)
+                try {
+                    val local = folderDao.getById(folder.id) ?: continue
+                    // UIDs from an older version of the folder would be wrong; skip until it's synced.
+                    if (local.uidValidity != 0L && local.uidValidity != remote.uidValidity) continue
+                    if (local.uidValidity == 0L) folderDao.update(local.copy(uidValidity = remote.uidValidity))
+
+                    val sequenceNumbers = try {
+                        remote.doCommand { protocol -> (protocol as IMAPProtocol).search(term) } as? IntArray
+                    } catch (e: MessagingException) {
+                        null // The server couldn't run this search here; move on.
+                    } ?: continue
+                    val newest = sequenceNumbers.sortedDescending().take(perFolder).toIntArray()
+                    if (newest.isEmpty()) continue
+                    val messages = remote.getMessages(newest)
+                    remote.fetch(messages, headerProfile())
+                    val byUid = messages.mapNotNull { m -> runCatching { remote.getUID(m) to m }.getOrNull() }.toMap()
+                    messageDao.insertAll(byUid.mapNotNull { (uid, m) -> runCatching { m.toEntity(folder.id, uid) }.getOrNull() })
+                    found += byUid.keys.chunked(500).flatMap { messageDao.idsForUids(folder.id, it) }
+                } finally {
+                    runCatching { remote.close(false) }
+                }
+            }
+            onProgress(folders.size, folders.size)
+        }
+        return found
     }
 
     /** Runs [block] on the shared IMAP connection, reconnecting once if it has gone stale. */
@@ -384,7 +433,7 @@ class SyncEngine(
         val highest = maxOf(local.highestUid, newUids.maxOrNull() ?: 0L)
 
         // 2. Flag changes and deletions for everything we hold.
-        val localFlags = messageDao.localFlags(local.id)
+        val localFlags = messageDao.localFlags(local.id, FLAG_WINDOW)
         if (localFlags.isNotEmpty()) {
             val oldest = localFlags.minOf { it.uid }
             val serverMessages = remote.getMessagesByUID(oldest, UIDFolder.LASTUID)
@@ -567,6 +616,9 @@ class SyncEngine(
         const val INITIAL_WINDOW = 200
         const val PREFETCH_BODIES = 25
         const val MAX_ATTEMPTS = 5
+
+        /** How many of a folder's newest cached messages have their flags and deletions checked each sync. */
+        const val FLAG_WINDOW = 1000
     }
 }
 

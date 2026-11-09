@@ -164,6 +164,29 @@ fun MailScreen(
     var listWidth by rememberSaveable { mutableFloatStateOf(380f) }
     val focusRequester = remember { FocusRequester() }
     val listState = rememberLazyListState()
+    val search by viewModel.search.collectAsStateWithLifecycle()
+    val searchFocus = remember { FocusRequester() }
+    var searchFocused by remember { mutableStateOf(false) }
+    val searchUi = SearchUi(
+        state = search,
+        folderName = folders.firstOrNull { it.id == selectedFolderId }?.displayName ?: "This folder",
+        resultCount = messages.size,
+        folderNames = folders.associate { it.id to it.displayName },
+        focusRequester = searchFocus,
+        onOpen = viewModel::openSearch,
+        onTextChange = viewModel::setSearchText,
+        onClose = viewModel::closeSearch,
+        onAllFoldersChange = viewModel::setSearchAllFolders,
+        onSearchServer = viewModel::searchServer,
+        onFocusChange = { searchFocused = it },
+        onSubmit = {
+            // Enter opens the first result.
+            messages.firstOrNull()?.let { viewModel.selectMessage(it.id) }
+            runCatching { focusRequester.requestFocus() }
+        },
+    )
+    // Back closes search on phones.
+    BackHandler(enabled = search != null && !selection.touch && selectedMessageId == null) { viewModel.closeSearch() }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
@@ -176,6 +199,27 @@ fun MailScreen(
             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
             val ctrl = event.isCtrlPressed || event.isMetaPressed
             val shift = event.isShiftPressed
+            // While typing in the search box, keys belong to it: Backspace must never delete an email.
+            if (searchFocused) {
+                return@onPreviewKeyEvent when (event.key) {
+                    Key.Escape -> { viewModel.closeSearch(); runCatching { focusRequester.requestFocus() }; true }
+                    Key.DirectionDown -> {
+                        viewModel.moveSelection(1)
+                        runCatching { focusRequester.requestFocus() }
+                        true
+                    }
+                    else -> false
+                }
+            }
+            if (search != null && event.key == Key.Escape && selection.ids.isEmpty()) {
+                viewModel.closeSearch()
+                return@onPreviewKeyEvent true
+            }
+            if ((ctrl && event.key == Key.F) || (!ctrl && event.key == Key.Slash)) {
+                viewModel.openSearch()
+                runCatching { searchFocus.requestFocus() }
+                return@onPreviewKeyEvent true
+            }
             val hasSelection = selection.ids.isNotEmpty()
             when {
                 ctrl && shift && event.key == Key.M -> { viewModel.openMovePicker(); true }
@@ -270,6 +314,7 @@ fun MailScreen(
         onSignOut = viewModel::signOut,
         onOpenSettings = onOpenSettings,
         onNewMessage = viewModel::newMessage,
+        search = searchUi,
         onOpenFolders = if (showMenu) ({ scope.launch { drawerState.open() } }) else null,
         modifier = paneModifier,
     )
