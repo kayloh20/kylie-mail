@@ -133,3 +133,55 @@ data class TrainedFolder(
     val highestUid: Long,
     val trainedAt: Long,
 )
+
+enum class DraftState {
+    /** Open in a compose window. */
+    EDITING,
+
+    /** Closed with content: waiting to be saved to the iCloud Drafts folder. */
+    SAVING,
+
+    /** Sent with Send: waiting for the undo window to pass, or for a connection. */
+    QUEUED,
+
+    /** Being handed to the mail server right now. */
+    SENDING,
+
+    /** Accepted by the server: only the copy in Sent and the reply flag are left to do. Never resent. */
+    SENT,
+
+    /** The server refused it; the user needs to fix something. */
+    FAILED,
+
+    /** Discarded: the copy in iCloud Drafts it replaced still has to be deleted. */
+    DISCARDING,
+}
+
+/** A message being written, from the first keystroke until it is sent or saved to iCloud Drafts. */
+@Entity(tableName = "drafts")
+data class DraftEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val state: DraftState = DraftState.EDITING,
+    val toList: String = "",
+    val ccList: String = "",
+    val bccList: String = "",
+    val subject: String = "",
+    val body: String = "",
+    /** Threading headers for replies. */
+    val inReplyTo: String? = null,
+    val references: String? = null,
+    /** The message being replied to, to flag it as answered once sent. */
+    val replyFolder: String? = null,
+    val replyUid: Long? = null,
+    /** A copy in the iCloud Drafts folder that this draft replaces. */
+    val serverDraftFolder: String? = null,
+    val serverDraftUid: Long? = null,
+    /** True when forwarding a message whose attachments are not included. */
+    val missingAttachments: Boolean = false,
+    /** Set once the Message-ID is chosen, so a retried send is recognisable in Sent. */
+    val messageId: String? = null,
+    val sendAfter: Long = 0,
+    val attempts: Int = 0,
+    val lastError: String? = null,
+    val updatedAt: Long = 0,
+)

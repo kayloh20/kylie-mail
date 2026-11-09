@@ -33,6 +33,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Each draft opens in its own window, beside the inbox on a Googlebook. -->
+        <activity
+            android:name=".ui.compose.ComposeActivity"
+            android:exported="false"
+            android:label="New message"
+            android:resizeableActivity="true"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation" />
+
         <service
             android:name=".data.push.MailPushService"
             android:exported="false"

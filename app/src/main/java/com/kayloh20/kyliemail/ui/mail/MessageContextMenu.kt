@@ -3,6 +3,9 @@ package com.kayloh20.kyliemail.ui.mail
 import com.kayloh20.kyliemail.ui.theme.KylieTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
+import androidx.compose.material.icons.automirrored.outlined.Forward
+import androidx.compose.material.icons.automirrored.outlined.Reply
+import androidx.compose.material.icons.automirrored.outlined.ReplyAll
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Delete
@@ -31,7 +34,14 @@ fun MessageContextMenu(
     onDelete: () -> Unit,
     suggestion: FolderSuggestion? = null,
     onFile: (Long) -> Unit = {},
+    writing: WritingActions? = null,
 ) {
+    if (writing != null && !multiple && !writing.inDrafts) {
+        DropdownMenuItem(text = { Text("Reply") }, leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Reply, null) }, trailingIcon = { Shortcut("Ctrl+R") }, onClick = writing.onReply)
+        DropdownMenuItem(text = { Text("Reply all") }, leadingIcon = { Icon(Icons.AutoMirrored.Outlined.ReplyAll, null) }, onClick = writing.onReplyAll)
+        DropdownMenuItem(text = { Text("Forward") }, leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Forward, null) }, onClick = writing.onForward)
+        HorizontalDivider()
+    }
     if (suggestion != null) {
         DropdownMenuItem(
             text = { Text("File to ${suggestion.displayName}") },

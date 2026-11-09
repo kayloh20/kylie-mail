@@ -158,6 +158,9 @@ class SyncEngine(
             }
         }
 
+    /** Runs [block] on the shared IMAP connection, reconnecting once if it has gone stale. */
+    suspend fun <T> useConnection(block: suspend (IMAPStore) -> T): T = withContext(Dispatchers.IO) { withConnection(block) }
+
     /** Runs [block] while no sync is in progress, for changes that must not interleave with one. */
     suspend fun <T> exclusive(block: suspend () -> T): T = mutex.withLock { block() }
 

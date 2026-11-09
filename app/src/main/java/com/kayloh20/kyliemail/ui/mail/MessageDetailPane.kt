@@ -16,6 +16,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
+import androidx.compose.material.icons.automirrored.outlined.Forward
+import androidx.compose.material.icons.automirrored.outlined.Reply
+import androidx.compose.material.icons.automirrored.outlined.ReplyAll
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material3.VerticalDivider
+import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Delete
@@ -70,6 +76,7 @@ fun MessageDetailPane(
     filingTrained: Boolean,
     onFile: (Long) -> Unit,
     onTrainFiling: () -> Unit,
+    writing: WritingActions,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
@@ -114,6 +121,7 @@ fun MessageDetailPane(
         val html = message.bodyHtml?.takeIf { it.isNotBlank() }
 
         MessageToolbar(
+            writing = writing,
             message = message,
             canArchive = canArchive,
             onArchive = onArchive,
@@ -170,6 +178,7 @@ fun MessageDetailPane(
 
 @Composable
 private fun MessageToolbar(
+    writing: WritingActions,
     message: MessageEntity,
     canArchive: Boolean,
     onArchive: () -> Unit,
@@ -180,6 +189,14 @@ private fun MessageToolbar(
     onPrint: (() -> Unit)?,
 ) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (writing.inDrafts) {
+            TooltipIconButton(Icons.Outlined.Edit, "Edit draft", writing.onEditDraft)
+        } else {
+            TooltipIconButton(Icons.AutoMirrored.Outlined.Reply, "Reply (Ctrl+R)", writing.onReply)
+            TooltipIconButton(Icons.AutoMirrored.Outlined.ReplyAll, "Reply all (Ctrl+Shift+R)", writing.onReplyAll)
+            TooltipIconButton(Icons.AutoMirrored.Outlined.Forward, "Forward (Ctrl+Shift+F)", writing.onForward)
+        }
+        VerticalDivider(Modifier.height(24.dp).padding(horizontal = 8.dp))
         if (canArchive) TooltipIconButton(Icons.Outlined.Archive, "Archive", onArchive)
         TooltipIconButton(Icons.Outlined.Delete, "Delete (Delete key)", onDelete)
         TooltipIconButton(Icons.AutoMirrored.Outlined.DriveFileMove, "Move to… (Ctrl+Shift+M)", onMove)
@@ -198,6 +215,15 @@ private fun MessageToolbar(
         if (onPrint != null) TooltipIconButton(Icons.Outlined.Print, "Print or save as PDF", onPrint)
     }
 }
+
+/** Reply, reply all, forward, and editing a saved draft. */
+data class WritingActions(
+    val inDrafts: Boolean,
+    val onReply: () -> Unit,
+    val onReplyAll: () -> Unit,
+    val onForward: () -> Unit,
+    val onEditDraft: () -> Unit,
+)
 
 @Composable
 private fun BulkSelection(

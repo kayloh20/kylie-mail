@@ -5,6 +5,7 @@ import com.kayloh20.kyliemail.data.MailActions
 import com.kayloh20.kyliemail.data.MailRepository
 import com.kayloh20.kyliemail.data.MoveHistory
 import com.kayloh20.kyliemail.data.filing.FilingEngine
+import com.kayloh20.kyliemail.data.compose.Outbox
 import com.kayloh20.kyliemail.data.filing.FolderSuggestion
 import com.kayloh20.kyliemail.data.notify.MailNotifier
 import com.kayloh20.kyliemail.data.settings.AppSettings
@@ -39,6 +40,8 @@ class AppContainer(context: Context) {
     /** The confident suggestion for a new message, for its notification, when suggestions are on. */
     private suspend fun filingSuggestionFor(messageId: Long): FolderSuggestion? =
         if (!settings.filingSuggestions.value) null else filing.suggest(listOf(messageId), limit = 1).firstOrNull()?.takeIf { it.confident }
+
+    val outbox = Outbox(context, database, credentials, settings, syncEngine, notifier, appScope)
 
     val repository = MailRepository(
         database, credentials, syncEngine, syncScheduler, inlineImages, imageTrust, actions, notifier, moveHistory,

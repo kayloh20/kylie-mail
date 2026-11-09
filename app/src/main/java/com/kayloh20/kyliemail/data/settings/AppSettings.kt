@@ -29,6 +29,26 @@ class AppSettings(private val context: Context) {
         _filingSuggestions.value = enabled
     }
 
+    private val _displayName = MutableStateFlow(prefs.getString(KEY_NAME, "").orEmpty())
+
+    /** The name shown next to the address in sent mail. */
+    val displayName: StateFlow<String> = _displayName.asStateFlow()
+
+    fun setDisplayName(name: String) {
+        prefs.edit { putString(KEY_NAME, name) }
+        _displayName.value = name
+    }
+
+    private val _signature = MutableStateFlow(prefs.getString(KEY_SIGNATURE, "").orEmpty())
+
+    /** Plain text added below new messages and replies, after the standard "-- " separator. */
+    val signature: StateFlow<String> = _signature.asStateFlow()
+
+    fun setSignature(text: String) {
+        prefs.edit { putString(KEY_SIGNATURE, text) }
+        _signature.value = text
+    }
+
     fun setThemeMode(mode: ThemeMode) {
         prefs.edit { putString(KEY_THEME, mode.name) }
         _themeMode.value = mode
@@ -53,5 +73,7 @@ class AppSettings(private val context: Context) {
     private companion object {
         const val KEY_THEME = "theme_mode"
         const val KEY_FILING = "filing_suggestions"
+        const val KEY_NAME = "display_name"
+        const val KEY_SIGNATURE = "signature"
     }
 }

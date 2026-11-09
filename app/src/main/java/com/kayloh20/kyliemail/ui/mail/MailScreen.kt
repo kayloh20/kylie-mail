@@ -47,6 +47,8 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import com.kayloh20.kyliemail.data.MailActions
+import com.kayloh20.kyliemail.data.compose.ReplyMode
+import com.kayloh20.kyliemail.ui.compose.ComposeActivity
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -80,15 +82,27 @@ fun MailScreen(
     val suggestions by viewModel.suggestions.collectAsStateWithLifecycle()
     val filingTrained by viewModel.filingTrained.collectAsStateWithLifecycle()
     val filingEnabled by viewModel.filingEnabled.collectAsStateWithLifecycle()
+    val inDrafts by viewModel.inDrafts.collectAsStateWithLifecycle()
+    val writing = WritingActions(
+        inDrafts = inDrafts,
+        onReply = { viewModel.reply(ReplyMode.REPLY) },
+        onReplyAll = { viewModel.reply(ReplyMode.REPLY_ALL) },
+        onForward = { viewModel.reply(ReplyMode.FORWARD) },
+        onEditDraft = viewModel::editDraft,
+    )
+    val composeContext = LocalContext.current
+    LaunchedEffect(Unit) {
+        viewModel.composeRequests.collect { draftId -> ComposeActivity.open(composeContext, draftId) }
+    }
     val snackbarHost = remember { SnackbarHostState() }
 
     // Show each notice; ones with Undo stay up for the undo window.
     LaunchedEffect(notice) {
         val current = notice ?: return@LaunchedEffect
-        val result = withTimeoutOrNull(if (current.undo != null) MailActions.UNDO_WINDOW_MS else 4_000L) {
+        val result = withTimeoutOrNull(if (current.canUndo) MailActions.UNDO_WINDOW_MS else 4_000L) {
             snackbarHost.showSnackbar(
                 message = current.text,
-                actionLabel = if (current.undo != null) "Undo" else null,
+                actionLabel = if (current.canUndo) "Undo" else null,
                 duration = SnackbarDuration.Indefinite,
             )
         }
@@ -134,6 +148,10 @@ fun MailScreen(
                 ctrl && shift && event.key == Key.M -> { viewModel.openMovePicker(); true }
                 ctrl && event.key == Key.K -> { viewModel.openGoToPicker(); true }
                 ctrl && event.key == Key.Comma -> { onOpenSettings(); true }
+                ctrl && event.key == Key.N -> { viewModel.newMessage(); true }
+                ctrl && shift && event.key == Key.R -> { writing.onReplyAll(); true }
+                ctrl && event.key == Key.R -> { writing.onReply(); true }
+                ctrl && shift && event.key == Key.F -> { writing.onForward(); true }
                 ctrl && event.key == Key.Z -> { viewModel.undo(); true }
                 ctrl && event.key == Key.A -> { viewModel.selectAll(); true }
                 ctrl -> false
@@ -153,6 +171,10 @@ fun MailScreen(
         selectedFolderId = selectedFolderId,
         onSelect = { id ->
             viewModel.selectFolder(id)
+            if (inDrawer) scope.launch { drawerState.close() }
+        },
+        onNewMessage = {
+            viewModel.newMessage()
             if (inDrawer) scope.launch { drawerState.close() }
         },
         modifier = paneModifier,
@@ -183,11 +205,19 @@ fun MailScreen(
                 onDelete = { close(); viewModel.deleteSelected() },
                 suggestion = suggestions.firstOrNull { it.confident },
                 onFile = { id -> close(); viewModel.moveSelected(id) },
+                writing = WritingActions(
+                    inDrafts = inDrafts,
+                    onReply = { close(); writing.onReply() },
+                    onReplyAll = { close(); writing.onReplyAll() },
+                    onForward = { close(); writing.onForward() },
+                    onEditDraft = { close(); writing.onEditDraft() },
+                ),
             )
         },
         onRefresh = viewModel::refresh,
         onSignOut = viewModel::signOut,
         onOpenSettings = onOpenSettings,
+        onNewMessage = viewModel::newMessage,
         onOpenFolders = if (showMenu) ({ scope.launch { drawerState.open() } }) else null,
         modifier = paneModifier,
     )
@@ -214,6 +244,7 @@ fun MailScreen(
         filingTrained = filingTrained || !filingEnabled,
         onFile = viewModel::moveSelected,
         onTrainFiling = onOpenTraining,
+        writing = writing,
         onBack = if (showBack) ({ viewModel.clearSelection() }) else null,
         modifier = paneModifier,
     )

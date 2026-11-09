@@ -36,6 +36,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.outlined.Attachment
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.DropdownMenu
@@ -90,6 +91,7 @@ fun MessageListPane(
     onSignOut: () -> Unit,
     onOpenFolders: (() -> Unit)?,
     onOpenSettings: () -> Unit,
+    onNewMessage: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -112,6 +114,8 @@ fun MessageListPane(
                 }
             },
             actions = {
+                // Without the folder sidebar, New message lives here.
+                if (onOpenFolders != null) TooltipIconButton(Icons.Outlined.Edit, "New message (Ctrl+N)", onNewMessage)
                 TooltipIconButton(Icons.Outlined.Refresh, "Refresh", onRefresh, enabled = !syncState.running)
                 Box {
                     TooltipIconButton(Icons.Outlined.MoreVert, "More", { menuOpen = true })

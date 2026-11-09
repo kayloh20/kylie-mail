@@ -20,6 +20,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -37,6 +38,14 @@ import com.kayloh20.kyliemail.data.settings.ThemeMode
 import com.kayloh20.kyliemail.ui.mail.TooltipIconButton
 import com.kayloh20.kyliemail.ui.theme.KylieTheme
 
+/** Your name and signature for mail you send. */
+data class SendingSettings(
+    val name: String,
+    val onNameChange: (String) -> Unit,
+    val signature: String,
+    val onSignatureChange: (String) -> Unit,
+)
+
 /** What the Smart filing section shows and does. */
 data class FilingSettings(
     val enabled: Boolean,
@@ -50,13 +59,14 @@ fun SettingsDialog(
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
     filing: FilingSettings,
+    sending: SendingSettings,
     accountEmail: String,
     onSignOut: () -> Unit,
     versionName: String,
     onDismiss: () -> Unit,
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        SettingsContent(themeMode, onThemeModeChange, filing, accountEmail, onSignOut, versionName, onDismiss)
+        SettingsContent(themeMode, onThemeModeChange, filing, sending, accountEmail, onSignOut, versionName, onDismiss)
     }
 }
 
@@ -65,6 +75,7 @@ fun SettingsContent(
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
     filing: FilingSettings,
+    sending: SendingSettings,
     accountEmail: String,
     onSignOut: () -> Unit,
     versionName: String,
@@ -105,6 +116,33 @@ fun SettingsContent(
                 }
                 Text(
                     "System follows your device's light or dark setting.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            HorizontalDivider(Modifier.padding(horizontal = 24.dp))
+
+            Section("Sending") {
+                OutlinedTextField(
+                    value = sending.name,
+                    onValueChange = sending.onNameChange,
+                    label = { Text("Your name") },
+                    placeholder = { Text("Shown next to $accountEmail") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = sending.signature,
+                    onValueChange = sending.onSignatureChange,
+                    label = { Text("Signature") },
+                    placeholder = { Text("Plain text, added below new messages and replies") },
+                    minLines = 2,
+                    maxLines = 5,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Mail is sent as plain text, exactly as you type it.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

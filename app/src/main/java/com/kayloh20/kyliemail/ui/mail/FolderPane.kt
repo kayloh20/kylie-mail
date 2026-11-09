@@ -26,6 +26,8 @@ import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Drafts
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material3.Button
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.Report
 import androidx.compose.material.icons.automirrored.outlined.Send
@@ -45,6 +47,7 @@ fun FolderPane(
     folders: List<FolderEntity>,
     selectedFolderId: Long?,
     onSelect: (Long) -> Unit,
+    onNewMessage: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier) {
@@ -52,8 +55,17 @@ fun FolderPane(
             "Kylie Mail",
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 20.dp, top = 20.dp, bottom = 8.dp),
+            modifier = Modifier.padding(start = 20.dp, top = 20.dp, bottom = 12.dp),
         )
+        Button(
+            onClick = onNewMessage,
+            shape = MaterialTheme.shapes.small,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+        ) {
+            Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("New message")
+        }
         LazyColumn(contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
             folders.forEachIndexed { index, folder ->
                 val custom = folder.role == FolderRole.CUSTOM

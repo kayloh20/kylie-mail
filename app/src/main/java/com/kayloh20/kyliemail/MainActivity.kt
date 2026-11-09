@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import com.kayloh20.kyliemail.data.settings.ThemeMode
 import com.kayloh20.kyliemail.ui.settings.SettingsDialog
 import com.kayloh20.kyliemail.ui.settings.FilingSettings
+import com.kayloh20.kyliemail.ui.settings.SendingSettings
 import com.kayloh20.kyliemail.ui.settings.TrainingDialog
 import com.kayloh20.kyliemail.data.filing.TrainingState
 import java.text.NumberFormat
@@ -84,7 +85,7 @@ class MainActivity : ComponentActivity() {
                         key(signedIn.email) {
                             val vm: MailViewModel = viewModel(
                                 key = "mail:${signedIn.email}",
-                                factory = factoryOf { MailViewModel(container.repository, container.filing, container.settings) },
+                                factory = factoryOf { MailViewModel(container.repository, container.filing, container.settings, container.outbox) },
                             )
                             val openRequest by openRequests.collectAsStateWithLifecycle()
                             MailScreen(
@@ -100,6 +101,8 @@ class MainActivity : ComponentActivity() {
                             val trained by filing.trainedFolders.collectAsStateWithLifecycle(emptyList())
                             val learned by filing.exampleCount.collectAsStateWithLifecycle(0)
                             val filingEnabled by container.settings.filingSuggestions.collectAsStateWithLifecycle()
+                            val senderName by container.settings.displayName.collectAsStateWithLifecycle()
+                            val signature by container.settings.signature.collectAsStateWithLifecycle()
                             if (showSettings) {
                                 SettingsDialog(
                                     themeMode = themeMode,
@@ -112,6 +115,12 @@ class MainActivity : ComponentActivity() {
                                             showSettings = false
                                             showTraining = true
                                         },
+                                    ),
+                                    sending = SendingSettings(
+                                        name = senderName,
+                                        onNameChange = container.settings::setDisplayName,
+                                        signature = signature,
+                                        onSignatureChange = container.settings::setSignature,
                                     ),
                                     accountEmail = signedIn.email,
                                     onSignOut = {
@@ -165,6 +174,11 @@ class MainActivity : ComponentActivity() {
                     KeyboardShortcutInfo("Move to folder", KeyEvent.KEYCODE_M, ctrl or shift),
                     KeyboardShortcutInfo("Go to folder", KeyEvent.KEYCODE_K, ctrl),
                     KeyboardShortcutInfo("Settings", KeyEvent.KEYCODE_COMMA, ctrl),
+                    KeyboardShortcutInfo("New message", KeyEvent.KEYCODE_N, ctrl),
+                    KeyboardShortcutInfo("Reply", KeyEvent.KEYCODE_R, ctrl),
+                    KeyboardShortcutInfo("Reply all", KeyEvent.KEYCODE_R, ctrl or shift),
+                    KeyboardShortcutInfo("Forward", KeyEvent.KEYCODE_F, ctrl or shift),
+                    KeyboardShortcutInfo("Send (in a message)", KeyEvent.KEYCODE_ENTER, ctrl),
                     KeyboardShortcutInfo("Undo", KeyEvent.KEYCODE_Z, ctrl),
                     KeyboardShortcutInfo("Select all", KeyEvent.KEYCODE_A, ctrl),
                     KeyboardShortcutInfo("Delete", KeyEvent.KEYCODE_FORWARD_DEL, 0),

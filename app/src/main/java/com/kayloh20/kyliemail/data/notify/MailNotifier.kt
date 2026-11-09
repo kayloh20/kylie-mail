@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import com.kayloh20.kyliemail.MainActivity
 import com.kayloh20.kyliemail.R
+import com.kayloh20.kyliemail.ui.compose.ComposeActivity
 import com.kayloh20.kyliemail.data.db.FolderEntity
 import com.kayloh20.kyliemail.data.db.MailDatabase
 import com.kayloh20.kyliemail.data.db.MessageEntity
@@ -70,6 +71,33 @@ class MailNotifier(
     fun cancel(messageId: Long) {
         manager.cancel(tag(messageId), ID_MESSAGE)
         updateSummary()
+    }
+
+    /** Tells the user a message couldn't be sent; tapping it reopens the draft. */
+    @android.annotation.SuppressLint("MissingPermission") // Checked in canPost().
+    fun notifySendFailed(draftId: Long, subject: String, reason: String) {
+        if (!canPost()) return
+        val open = PendingIntent.getActivity(
+            context,
+            (draftId % Int.MAX_VALUE).toInt(),
+            ComposeActivity.intent(context, draftId),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL_MAIL)
+            .setSmallIcon(R.drawable.ic_stat_mail)
+            .setContentTitle("Couldn't send \"${subject.ifBlank { "(no subject)" }}\"")
+            .setContentText(reason)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(reason))
+            .setColor(ACCENT)
+            .setCategory(NotificationCompat.CATEGORY_ERROR)
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build()
+        manager.notify(TAG_SEND_FAILED + draftId, ID_SEND_FAILED, notification)
+    }
+
+    fun clearSendFailure(draftId: Long) {
+        manager.cancel(TAG_SEND_FAILED + draftId, ID_SEND_FAILED)
     }
 
     fun clearAll() {
@@ -195,6 +223,8 @@ class MailNotifier(
         const val ID_CONNECTION = 100
         private const val ID_MESSAGE = 1
         private const val ID_SUMMARY = 2
+        private const val ID_SEND_FAILED = 3
+        private const val TAG_SEND_FAILED = "send-failed:"
         private const val TAG_PREFIX = "message:"
         private const val GROUP = "inbox"
         private const val MAX_INDIVIDUAL = 5

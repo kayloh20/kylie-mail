@@ -7,6 +7,8 @@ import androidx.compose.ui.graphics.Color
 import com.kayloh20.kyliemail.data.settings.ThemeMode
 import com.kayloh20.kyliemail.ui.settings.SettingsContent
 import com.kayloh20.kyliemail.ui.settings.FilingSettings
+import com.kayloh20.kyliemail.ui.settings.SendingSettings
+import com.kayloh20.kyliemail.ui.mail.WritingActions
 import com.kayloh20.kyliemail.ui.settings.TrainingContent
 import com.kayloh20.kyliemail.data.filing.FolderSuggestion
 import com.kayloh20.kyliemail.data.filing.TrainingState
@@ -118,6 +120,7 @@ class ScreenshotTest {
                         versionName = "0.1.0",
                         onDismiss = {},
                         filing = FilingSettings(true, {}, "Learned from 2,340 emails in 9 folders, and keeps learning as you file.", {}),
+                        sending = SendingSettings("Kylie", {}, "Kylie\nCheer captain 📣", {}),
                     )
                 }
             }
@@ -158,6 +161,7 @@ class ScreenshotTest {
                             folders = folders,
                             selectedFolderId = 1,
                             onSelect = {},
+                            onNewMessage = {},
                             modifier = Modifier.width(248.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow),
                         )
                         VerticalDivider()
@@ -175,6 +179,7 @@ class ScreenshotTest {
                             onSignOut = {},
                             onOpenFolders = null,
                             onOpenSettings = {},
+                            onNewMessage = {},
                             modifier = Modifier.width(400.dp).fillMaxHeight(),
                         )
                         PaneDivider(onDrag = {})
@@ -198,6 +203,7 @@ class ScreenshotTest {
                             filingTrained = true,
                             onFile = {},
                             onTrainFiling = {},
+                            writing = WritingActions(false, {}, {}, {}, {}),
                             onBack = null,
                             modifier = Modifier.weight(1f).fillMaxHeight(),
                         )

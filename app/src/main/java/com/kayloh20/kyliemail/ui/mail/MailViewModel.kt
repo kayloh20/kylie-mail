@@ -4,6 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kayloh20.kyliemail.data.MailRepository
 import com.kayloh20.kyliemail.data.UndoToken
+import com.kayloh20.kyliemail.data.compose.Outbox
+import com.kayloh20.kyliemail.data.compose.ReplyMode
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import com.kayloh20.kyliemail.data.filing.FilingEngine
 import com.kayloh20.kyliemail.data.filing.FolderSuggestion
 import com.kayloh20.kyliemail.data.settings.AppSettings
@@ -33,13 +38,22 @@ import kotlinx.coroutines.launch
 enum class PickerMode { MOVE, GO_TO }
 
 /** A short message at the bottom of the screen, with Undo when the change can still be taken back. */
-data class Notice(val text: String, val undo: UndoToken? = null, val restore: Selection? = null)
+data class Notice(
+    val text: String,
+    val undo: UndoToken? = null,
+    val restore: Selection? = null,
+    /** A message waiting to be sent, which Undo takes back into its compose window. */
+    val unsendDraftId: Long? = null,
+) {
+    val canUndo: Boolean get() = undo != null || unsendDraftId != null
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MailViewModel(
     private val repository: MailRepository,
     private val filing: FilingEngine,
     private val settings: AppSettings,
+    private val outbox: Outbox,
 ) : ViewModel() {
 
     val folders: StateFlow<List<FolderEntity>> =
@@ -127,6 +141,13 @@ class MailViewModel(
                     val message = repository.messageById(id)
                     if (message != null && !message.isSeen) repository.perform(id, UserAction.MARK_READ)
                 }
+            }
+        }
+        // Offer Undo while a sent message waits to leave.
+        viewModelScope.launch {
+            outbox.sending.collect { event ->
+                val subject = event.subject.ifBlank { "Message" }.let { if (it.length > 40) it.take(40) + "…" else it }
+                _notice.value = Notice("Sending \"$subject\"…", unsendDraftId = event.draftId)
             }
         }
         refresh()
@@ -231,8 +252,14 @@ class MailViewModel(
 
     fun undo() {
         val notice = _notice.value ?: return
-        val token = notice.undo ?: return
         _notice.value = null
+        notice.unsendDraftId?.let { id ->
+            viewModelScope.launch {
+                if (outbox.undoSend(id)) _composeRequests.emit(id) else _notice.value = Notice("Too late to undo. The message was already sent.")
+            }
+            return
+        }
+        val token = notice.undo ?: return
         viewModelScope.launch {
             if (repository.undo(token)) {
                 notice.restore?.let { _selection.value = it }
@@ -240,6 +267,32 @@ class MailViewModel(
                 _notice.value = Notice("Too late to undo. The change was already sent to iCloud.")
             }
         }
+    }
+
+    // Writing mail
+
+    private val _composeRequests = MutableSharedFlow<Long>(extraBufferCapacity = 4)
+
+    /** Drafts to open in a compose window. */
+    val composeRequests: SharedFlow<Long> = _composeRequests.asSharedFlow()
+
+    /** True when the open folder is Drafts, where messages are edited rather than replied to. */
+    val inDrafts: StateFlow<Boolean> = combine(folders, _selectedFolderId) { list, selected ->
+        list.firstOrNull { it.id == selected }?.role == FolderRole.DRAFTS
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun newMessage() {
+        viewModelScope.launch { _composeRequests.emit(outbox.createNew()) }
+    }
+
+    fun reply(mode: ReplyMode) {
+        val id = selectedMessageId.value ?: return
+        viewModelScope.launch { outbox.createReply(id, mode)?.let { _composeRequests.emit(it) } }
+    }
+
+    fun editDraft() {
+        val id = selectedMessageId.value ?: return
+        viewModelScope.launch { outbox.editServerDraft(id)?.let { _composeRequests.emit(it) } }
     }
 
     fun dismissNotice(notice: Notice) {

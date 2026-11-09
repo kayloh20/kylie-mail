@@ -90,6 +90,9 @@ interface MessageDao {
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun deleteById(id: Long)
 
+    @Query("UPDATE messages SET isAnswered = 1 WHERE folderId = :folderId AND uid = :uid")
+    suspend fun setAnswered(folderId: Long, uid: Long)
+
     @Query("UPDATE messages SET isSeen = :seen WHERE id = :id")
     suspend fun setSeen(id: Long, seen: Boolean)
 
@@ -133,6 +136,47 @@ interface FilingDao {
 
     @Query("DELETE FROM trained_folders WHERE fullName = :fullName")
     suspend fun forgetTrainedFolder(fullName: String)
+}
+
+data class Contact(val name: String, val address: String, val count: Int)
+
+@Dao
+interface DraftDao {
+    @Insert
+    suspend fun insert(draft: DraftEntity): Long
+
+    @Update
+    suspend fun update(draft: DraftEntity)
+
+    @Query("SELECT * FROM drafts WHERE id = :id")
+    suspend fun get(id: Long): DraftEntity?
+
+    @Query("SELECT * FROM drafts WHERE state IN ('SAVING', 'QUEUED', 'SENT', 'DISCARDING') AND sendAfter <= :now ORDER BY id")
+    suspend fun ready(now: Long): List<DraftEntity>
+
+    @Query("SELECT COUNT(*) FROM drafts WHERE state IN ('SAVING', 'QUEUED', 'SENT', 'DISCARDING')")
+    suspend fun pendingCount(): Int
+
+    /** Sends interrupted part-way, for example by the app being closed. */
+    @Query("SELECT * FROM drafts WHERE state = 'SENDING' AND updatedAt < :before")
+    suspend fun stuckSending(before: Long): List<DraftEntity>
+
+    /** Moves a draft between states only if it is still in [from], so a send and an undo can't both win. */
+    @Query("UPDATE drafts SET state = :to, updatedAt = :now WHERE id = :id AND state = :from")
+    suspend fun transition(id: Long, from: DraftState, to: DraftState, now: Long): Int
+
+    @Query("DELETE FROM drafts WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    /** People who have emailed this account, most frequent first, for address suggestions. */
+    @Query(
+        """
+        SELECT fromName AS name, fromAddress AS address, COUNT(*) AS count FROM messages
+        WHERE fromAddress != '' AND (fromAddress LIKE :pattern OR fromName LIKE :pattern)
+        GROUP BY lower(fromAddress) ORDER BY count DESC LIMIT :limit
+        """,
+    )
+    suspend fun contacts(pattern: String, limit: Int): List<Contact>
 }
 
 @Dao
