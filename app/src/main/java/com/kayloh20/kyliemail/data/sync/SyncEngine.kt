@@ -41,6 +41,12 @@ import javax.mail.MessagingException
 import javax.mail.UIDFolder
 import javax.mail.internet.InternetAddress
 
+/** A folder an iCloud search couldn't cover, and why. */
+data class SkippedFolder(val name: String, val reason: String)
+
+/** What an iCloud search found: the local ids of every match, and any folders it couldn't search. */
+data class ServerSearchResult(val messageIds: List<Long>, val skipped: List<SkippedFolder>)
+
 sealed interface SyncOutcome {
     data object Success : SyncOutcome
     data object NotSignedIn : SyncOutcome
@@ -207,40 +213,63 @@ class SyncEngine(
         folders: List<FolderEntity>,
         perFolder: Int,
         onProgress: (done: Int, total: Int) -> Unit,
-    ): List<Long> {
-        val term = ServerSearch.term(terms) ?: return emptyList()
-        val found = mutableListOf<Long>()
-        useConnection { store ->
+    ): ServerSearchResult {
+        val term = ServerSearch.term(terms) ?: return ServerSearchResult(emptyList(), emptyList())
+        return useConnection { store ->
+            // Started fresh on every attempt, since a dropped connection retries the whole search.
+            val found = mutableListOf<Long>()
+            val skipped = mutableListOf<SkippedFolder>()
             for ((index, folder) in folders.withIndex()) {
                 onProgress(index, folders.size)
-                val remote = store.getFolder(folder.fullName) as IMAPFolder
-                if (!remote.exists()) continue
-                remote.open(Folder.READ_ONLY)
-                try {
-                    val local = folderDao.getById(folder.id) ?: continue
-                    // UIDs from an older version of the folder would be wrong; skip until it's synced.
-                    if (local.uidValidity != 0L && local.uidValidity != remote.uidValidity) continue
-                    if (local.uidValidity == 0L) folderDao.update(local.copy(uidValidity = remote.uidValidity))
-
-                    val sequenceNumbers = try {
-                        remote.doCommand { protocol -> (protocol as IMAPProtocol).search(term) } as? IntArray
-                    } catch (e: MessagingException) {
-                        null // The server couldn't run this search here; move on.
-                    } ?: continue
-                    val newest = sequenceNumbers.sortedDescending().take(perFolder).toIntArray()
-                    if (newest.isEmpty()) continue
-                    val messages = remote.getMessages(newest)
-                    remote.fetch(messages, headerProfile())
-                    val byUid = messages.mapNotNull { m -> runCatching { remote.getUID(m) to m }.getOrNull() }.toMap()
-                    messageDao.insertAll(byUid.mapNotNull { (uid, m) -> runCatching { m.toEntity(folder.id, uid) }.getOrNull() })
-                    found += byUid.keys.chunked(500).flatMap { messageDao.idsForUids(folder.id, it) }
-                } finally {
-                    runCatching { remote.close(false) }
+                val reason = try {
+                    searchFolder(store, folder, term, perFolder, found)
+                } catch (e: FolderClosedException) {
+                    throw e
+                } catch (e: StoreClosedException) {
+                    throw e
+                } catch (e: MessagingException) {
+                    "it couldn't be opened (${e.message ?: "server error"})"
                 }
+                if (reason != null) skipped += SkippedFolder(folder.displayName, reason)
             }
             onProgress(folders.size, folders.size)
+            ServerSearchResult(found, skipped)
         }
-        return found
+    }
+
+    /** Searches one folder, adding matches to [found]. Returns why it was skipped, or null if searched. */
+    private suspend fun searchFolder(
+        store: IMAPStore,
+        folder: FolderEntity,
+        term: javax.mail.search.SearchTerm,
+        perFolder: Int,
+        found: MutableList<Long>,
+    ): String? {
+        val remote = store.getFolder(folder.fullName) as IMAPFolder
+        if (!remote.exists()) return "it no longer exists on iCloud"
+        remote.open(Folder.READ_ONLY)
+        try {
+            val local = folderDao.getById(folder.id) ?: return "it's no longer on this device"
+            // UIDs from an older version of the folder would be wrong; it needs a sync first.
+            if (local.uidValidity != 0L && local.uidValidity != remote.uidValidity) return "it changed on iCloud and needs to sync first"
+            if (local.uidValidity == 0L) folderDao.update(local.copy(uidValidity = remote.uidValidity))
+
+            val sequenceNumbers = try {
+                remote.doCommand { protocol -> (protocol as IMAPProtocol).search(term) } as? IntArray
+            } catch (e: MessagingException) {
+                return "iCloud couldn't run this search there (${e.message ?: "refused"})"
+            } ?: return "iCloud couldn't run this search there"
+            val newest = sequenceNumbers.sortedDescending().take(perFolder).toIntArray()
+            if (newest.isEmpty()) return null
+            val messages = remote.getMessages(newest)
+            remote.fetch(messages, headerProfile())
+            val byUid = messages.mapNotNull { m -> runCatching { remote.getUID(m) to m }.getOrNull() }.toMap()
+            messageDao.insertAll(byUid.mapNotNull { (uid, m) -> runCatching { m.toEntity(folder.id, uid) }.getOrNull() })
+            found += byUid.keys.chunked(500).flatMap { messageDao.idsForUids(folder.id, it) }
+            return null
+        } finally {
+            runCatching { remote.close(false) }
+        }
     }
 
     /** Runs [block] on the shared IMAP connection, reconnecting once if it has gone stale. */

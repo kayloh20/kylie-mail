@@ -33,6 +33,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
 /** Everything the search box needs, so the message list can switch between folder and search views. */
@@ -142,11 +143,34 @@ fun ServerSearchFooter(search: SearchUi) {
                     modifier = Modifier.width(220.dp),
                 )
             }
-            is ServerSearchState.Done -> Text(
-                if (server.found == 0) "iCloud has nothing more for this search." else "Included ${server.found} matches from iCloud.",
-                style = MaterialTheme.typography.bodySmall,
-                color = com.kayloh20.kyliemail.ui.theme.KylieTheme.colors.textMuted,
-            )
+            is ServerSearchState.Done -> {
+                val missed = server.skipped.isNotEmpty()
+                Text(
+                    serverSearchSummary(server.found, server.skipped, server.searched),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (missed) MaterialTheme.colorScheme.error else com.kayloh20.kyliemail.ui.theme.KylieTheme.colors.textMuted,
+                    textAlign = TextAlign.Center,
+                )
+                if (missed) {
+                    // Each folder that was missed, and why, so a refusal is never mistaken for "no results".
+                    server.skipped.take(5).forEach { folder ->
+                        Text(
+                            "${folder.name}: ${folder.reason}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = com.kayloh20.kyliemail.ui.theme.KylieTheme.colors.textMuted,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                    if (server.skipped.size > 5) {
+                        Text(
+                            "and ${server.skipped.size - 5} more",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = com.kayloh20.kyliemail.ui.theme.KylieTheme.colors.textMuted,
+                        )
+                    }
+                    TextButton(onClick = search.onSearchServer) { Text("Try again") }
+                }
+            }
             is ServerSearchState.Failed -> {
                 Text("Couldn't search iCloud: ${server.message}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 TextButton(onClick = search.onSearchServer) { Text("Try again") }

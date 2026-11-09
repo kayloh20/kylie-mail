@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.debounce
 import com.kayloh20.kyliemail.data.search.SearchQuery
+import com.kayloh20.kyliemail.data.sync.SkippedFolder
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -56,7 +57,7 @@ data class SearchState(
 sealed interface ServerSearchState {
     data object Idle : ServerSearchState
     data class Running(val done: Int, val total: Int) : ServerSearchState
-    data class Done(val found: Int) : ServerSearchState
+    data class Done(val found: Int, val skipped: List<SkippedFolder> = emptyList(), val searched: Int = 0) : ServerSearchState
     data class Failed(val message: String) : ServerSearchState
 }
 
@@ -149,10 +150,15 @@ class MailViewModel(
         serverSearchJob = viewModelScope.launch {
             update { it.copy(server = ServerSearchState.Running(0, targets.size)) }
             try {
-                val found = repository.searchServer(query, targets) { done, total ->
+                val result = repository.searchServer(query, targets) { done, total ->
                     update { it.copy(server = ServerSearchState.Running(done, total)) }
                 }
-                update { it.copy(serverHits = it.serverHits + found, server = ServerSearchState.Done(found.size)) }
+                update {
+                    it.copy(
+                        serverHits = it.serverHits + result.messageIds,
+                        server = ServerSearchState.Done(result.messageIds.size, result.skipped, targets.size),
+                    )
+                }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 update { it.copy(server = ServerSearchState.Failed(e.message ?: "Couldn't reach iCloud.")) }

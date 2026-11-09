@@ -70,8 +70,12 @@ class MailRepository(
     fun summaries(ids: Collection<Long>): Flow<List<MessageSummary>> =
         if (ids.isEmpty()) flowOf(emptyList()) else db.messages().observeSummariesByIds(ids.toList())
 
-    /** Asks iCloud to search [folders] for mail not on the device yet; returns the matches' ids. */
-    suspend fun searchServer(query: SearchQuery, folders: List<FolderEntity>, onProgress: (Int, Int) -> Unit): List<Long> =
+    /** Asks iCloud to search [folders] for mail not on the device yet. */
+    suspend fun searchServer(
+        query: SearchQuery,
+        folders: List<FolderEntity>,
+        onProgress: (Int, Int) -> Unit,
+    ): com.kayloh20.kyliemail.data.sync.ServerSearchResult =
         syncEngine.searchServer(query.serverTerms, folders, SERVER_RESULTS_PER_FOLDER, onProgress)
 
     fun attachments(messageId: Long): Flow<List<com.kayloh20.kyliemail.data.db.AttachmentEntity>> = db.attachments().observeFor(messageId)
