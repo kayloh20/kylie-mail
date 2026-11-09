@@ -28,9 +28,16 @@ iCloud requires an app-specific password for mail apps other than Apple Mail:
 
 ## Installing a build
 
-Every push to `main` builds a debug APK on GitHub Actions. Open the latest run under **Actions**,
-download the `kylie-mail-debug-*` artifact, unzip it and install `app-debug.apk`. All builds are
-signed with the same key in `app/debug.keystore`, so a new build installs over the previous one.
+Every push to `main` builds a signed release APK on GitHub Actions. Open the latest run under
+**Actions**, download the `kylie-mail-*` artifact, unzip it and install the APK. Each build installs
+over the previous one.
+
+Release builds are signed with a private key that lives only in the repository's GitHub secrets:
+
+- `RELEASE_KEYSTORE_BASE64`: the PKCS12 keystore, base64 encoded
+- `RELEASE_KEYSTORE_PASSWORD`: its password (also used for the key)
+
+Debug builds install as a separate app, "Kylie Mail Debug" (`com.kayloh20.kyliemail.debug`).
 
 ## Building locally
 
@@ -39,3 +46,6 @@ Requires JDK 17 or newer and the Android SDK (platform 36).
 ```bash
 ./gradlew assembleDebug testDebugUnitTest
 ```
+
+To build a signed release locally, set `RELEASE_KEYSTORE_FILE` to the keystore path and
+`RELEASE_KEYSTORE_PASSWORD` to its password, then run `./gradlew assembleRelease`.

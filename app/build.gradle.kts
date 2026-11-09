@@ -21,20 +21,31 @@ android {
         versionName = "0.1.0"
     }
 
+    // Release builds are signed with a private key supplied by the environment (GitHub secrets in CI).
+    // The key is never stored in the repository.
+    val releaseKeystore = System.getenv("RELEASE_KEYSTORE_FILE")?.let(::file)?.takeIf { it.exists() }
     signingConfigs {
-        // A fixed debug key keeps sideloaded builds upgradable across CI runs.
-        getByName("debug") {
-            storeFile = file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = releaseKeystore
+                storeType = "PKCS12"
+                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS") ?: "kyliemail"
+                keyPassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+            }
         }
     }
 
     buildTypes {
+        debug {
+            // Lets a development build sit next to the release app instead of replacing it.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 
