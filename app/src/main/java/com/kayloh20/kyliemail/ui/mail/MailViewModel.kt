@@ -63,7 +63,7 @@ class MailViewModel(private val repository: MailRepository) : ViewModel() {
         if (_selectedFolderId.value == id) return
         _selectedFolderId.value = id
         _selectedMessageId.value = null
-        viewModelScope.launch { repository.refresh(id) }
+        viewModelScope.launch { repository.refreshFolder(id) }
     }
 
     fun selectMessage(id: Long?) {

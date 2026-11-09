@@ -1,6 +1,7 @@
 package com.kayloh20.kyliemail.data.sync
 
 import androidx.room.withTransaction
+import com.kayloh20.kyliemail.data.account.Account
 import com.kayloh20.kyliemail.data.account.CredentialStore
 import com.kayloh20.kyliemail.data.db.FolderEntity
 import com.kayloh20.kyliemail.data.db.MailDatabase
@@ -49,36 +50,29 @@ class SyncEngine(
 ) {
     private val folderDao = db.folders()
     private val messageDao = db.messages()
+    /** Only one header sync runs at a time. */
     private val mutex = Mutex()
+
+    /** Guards the shared connection below. */
+    private val connectionLock = Mutex()
+    private var store: IMAPStore? = null
+    private var storeAccount: Account? = null
 
     private val _state = MutableStateFlow(SyncState())
     val state: StateFlow<SyncState> = _state.asStateFlow()
 
-    /** Syncs the folder list, the inbox, and [focusFolderId] if given. Only one sync runs at a time. */
-    suspend fun sync(focusFolderId: Long? = null): SyncOutcome = mutex.withLock {
-        val account = credentials.account.value ?: return SyncOutcome.NotSignedIn
-        _state.update { it.copy(running = true) }
-        val outcome = withContext(Dispatchers.IO) {
-            runCatchingMail {
-                withStore(account.username, account.password) { store ->
-                    syncFolderList(store)
-                    val targets = listOfNotNull(
-                        folderDao.getByRole(FolderRole.INBOX),
-                        focusFolderId?.let { folderDao.getById(it) },
-                    ).distinctBy { it.id }
-                    for (folder in targets) syncMessages(store, folder)
-                    for (folder in targets) prefetchBodies(store, folder)
-                }
-            }
-        }
-        _state.update {
-            SyncState(
-                running = false,
-                lastOutcome = outcome,
-                lastSuccessAt = if (outcome == SyncOutcome.Success) System.currentTimeMillis() else it.lastSuccessAt,
-            )
-        }
-        outcome
+    /** Full refresh: the folder list and unread counts, the inbox, and [focusFolderId] if given. */
+    suspend fun sync(focusFolderId: Long? = null): SyncOutcome = syncHeaders { store ->
+        syncFolderList(store)
+        listOfNotNull(
+            folderDao.getByRole(FolderRole.INBOX),
+            focusFolderId?.let { folderDao.getById(it) },
+        ).distinctBy { it.id }
+    }
+
+    /** Quick refresh of a single folder, used when it is opened. */
+    suspend fun syncFolder(folderId: Long): SyncOutcome = syncHeaders {
+        listOfNotNull(folderDao.getById(folderId))
     }
 
     /** Runs [block] while no sync is in progress, for changes that must not interleave with one. */
@@ -88,13 +82,93 @@ class SyncEngine(
     suspend fun loadBody(messageId: Long): SyncOutcome = withContext(Dispatchers.IO) {
         val message = messageDao.getById(messageId) ?: return@withContext SyncOutcome.Success
         if (message.bodyLoaded) return@withContext SyncOutcome.Success
-        val account = credentials.account.value ?: return@withContext SyncOutcome.NotSignedIn
+        if (credentials.account.value == null) return@withContext SyncOutcome.NotSignedIn
         val folder = folderDao.getById(message.folderId) ?: return@withContext SyncOutcome.Success
         runCatchingMail {
-            withStore(account.username, account.password) { store ->
+            withConnection { store ->
                 withOpenFolder(store, folder) { remote -> downloadBodies(remote, listOf(message)) }
             }
         }
+    }
+
+    /** Closes the shared connection, for example on sign-out. */
+    suspend fun disconnect() = withContext(Dispatchers.IO) {
+        connectionLock.withLock {
+            runCatching { store?.close() }
+            store = null
+            storeAccount = null
+        }
+    }
+
+    /**
+     * Syncs message headers for the folders [pickFolders] returns, then downloads recent bodies.
+     * The list is up to date as soon as the headers are in; bodies follow without blocking other syncs.
+     */
+    private suspend fun syncHeaders(pickFolders: suspend (IMAPStore) -> List<FolderEntity>): SyncOutcome {
+        var synced: List<FolderEntity> = emptyList()
+        val outcome = mutex.withLock {
+            if (credentials.account.value == null) return SyncOutcome.NotSignedIn
+            _state.update { it.copy(running = true) }
+            val result = withContext(Dispatchers.IO) {
+                runCatchingMail {
+                    withConnection { store ->
+                        val targets = pickFolders(store)
+                        for (folder in targets) syncMessages(store, folder)
+                        synced = targets
+                    }
+                }
+            }
+            _state.update {
+                SyncState(
+                    running = false,
+                    lastOutcome = result,
+                    lastSuccessAt = if (result == SyncOutcome.Success) System.currentTimeMillis() else it.lastSuccessAt,
+                )
+            }
+            result
+        }
+        if (outcome == SyncOutcome.Success && synced.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                runCatchingMail { withConnection { store -> for (folder in synced) prefetchBodies(store, folder) } }
+            }
+        }
+        return outcome
+    }
+
+    /**
+     * Runs [block] on the shared connection, opening one if needed. If the connection turns out
+     * to be dead (after sleep or a network change, say), it reconnects and tries once more.
+     */
+    private suspend fun <T> withConnection(block: suspend (IMAPStore) -> T): T {
+        val account = credentials.account.value ?: throw AuthenticationFailedException("Not signed in")
+        return try {
+            block(connection(account))
+        } catch (e: AuthenticationFailedException) {
+            throw e
+        } catch (e: MessagingException) {
+            dropConnection()
+            block(connection(account))
+        } catch (e: IOException) {
+            dropConnection()
+            block(connection(account))
+        }
+    }
+
+    private suspend fun connection(account: Account): IMAPStore = connectionLock.withLock {
+        val current = store
+        // isConnected sends a NOOP when the connection has been idle, so a dead socket is caught here.
+        if (current != null && storeAccount == account && current.isConnected) return current
+        runCatching { current?.close() }
+        connector.connect(account.username, account.password).also {
+            store = it
+            storeAccount = account
+        }
+    }
+
+    private suspend fun dropConnection() = connectionLock.withLock {
+        runCatching { store?.close() }
+        store = null
+        storeAccount = null
     }
 
     private suspend fun syncFolderList(store: IMAPStore) {
@@ -226,15 +300,6 @@ class SyncEngine(
             val serverMessage = runCatching { remote.getMessageByUID(message.uid) }.getOrNull() ?: continue
             val body = runCatching { extractBody(serverMessage) }.getOrNull() ?: continue
             messageDao.setBody(message.id, body.text, body.html, makePreview(body.text, body.html))
-        }
-    }
-
-    private inline fun <T> withStore(username: String, password: String, block: (IMAPStore) -> T): T {
-        val store = connector.connect(username, password)
-        try {
-            return block(store)
-        } finally {
-            runCatching { store.close() }
         }
     }
 

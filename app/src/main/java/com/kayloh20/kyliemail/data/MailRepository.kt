@@ -30,6 +30,8 @@ class MailRepository(
 
     suspend fun refresh(focusFolderId: Long?): SyncOutcome = syncEngine.sync(focusFolderId)
 
+    suspend fun refreshFolder(folderId: Long): SyncOutcome = syncEngine.syncFolder(folderId)
+
     suspend fun loadBody(messageId: Long): SyncOutcome = syncEngine.loadBody(messageId)
 
     fun signIn(account: Account) {
@@ -43,5 +45,6 @@ class MailRepository(
             withContext(Dispatchers.IO) { db.clearAllTables() }
             credentials.clear()
         }
+        syncEngine.disconnect()
     }
 }

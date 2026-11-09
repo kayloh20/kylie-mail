@@ -40,6 +40,9 @@ class ImapConnector(private val server: ServerConfig = ServerConfig.ICLOUD) {
         put("mail.imaps.connectiontimeout", "20000")
         put("mail.imaps.timeout", "60000")
         put("mail.imaps.writetimeout", "20000")
+        // Keep a couple of logged-in connections around so opening folders doesn't log in again each time.
+        put("mail.imaps.connectionpoolsize", "2")
+        put("mail.imaps.connectionpooltimeout", "300000")
         // Reading a message must never mark it read on the server by itself.
         put("mail.imaps.peek", "true")
     }
