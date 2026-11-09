@@ -9,6 +9,8 @@ import com.kayloh20.kyliemail.ui.settings.SettingsContent
 import com.kayloh20.kyliemail.ui.settings.FilingSettings
 import com.kayloh20.kyliemail.ui.settings.SendingSettings
 import com.kayloh20.kyliemail.ui.mail.WritingActions
+import com.kayloh20.kyliemail.ui.mail.FileActions
+import com.kayloh20.kyliemail.data.db.AttachmentEntity
 import com.kayloh20.kyliemail.ui.settings.TrainingContent
 import com.kayloh20.kyliemail.data.filing.FolderSuggestion
 import com.kayloh20.kyliemail.data.filing.TrainingState
@@ -204,6 +206,16 @@ class ScreenshotTest {
                             onFile = {},
                             onTrainFiling = {},
                             writing = WritingActions(false, {}, {}, {}, {}),
+                            files = FileActions(
+                                attachments = listOf(
+                                    AttachmentEntity(1, 2, "2", "Practice schedule.pdf", "application/pdf", 248_000, false),
+                                    AttachmentEntity(2, 2, "3", "team-photo.jpg", "image/jpeg", 2_202_009, false),
+                                ),
+                                busy = setOf(2L),
+                                onOpen = {},
+                                onSave = {},
+                                onOpenInBody = {},
+                            ),
                             onBack = null,
                             modifier = Modifier.weight(1f).fillMaxHeight(),
                         )

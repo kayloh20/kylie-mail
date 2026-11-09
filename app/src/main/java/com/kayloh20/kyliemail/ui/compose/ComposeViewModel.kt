@@ -1,6 +1,7 @@
 package com.kayloh20.kyliemail.ui.compose
 
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -10,6 +11,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kayloh20.kyliemail.data.account.CredentialStore
 import com.kayloh20.kyliemail.data.compose.Outbox
+import com.kayloh20.kyliemail.data.compose.MessageComposer
+import com.kayloh20.kyliemail.data.MailAttachments
+import com.kayloh20.kyliemail.data.db.DraftAttachmentEntity
+import android.content.ContentResolver
+import android.net.Uri
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import com.kayloh20.kyliemail.data.db.Contact
 import com.kayloh20.kyliemail.data.db.DraftState
 import com.kayloh20.kyliemail.data.db.MailDatabase
@@ -30,7 +39,47 @@ class ComposeViewModel(
     settings: AppSettings,
     private val db: MailDatabase,
     credentials: CredentialStore,
+    private val mailAttachments: MailAttachments,
 ) : ViewModel() {
+    /** Files attached to this draft. */
+    val attachments: StateFlow<List<DraftAttachmentEntity>> = db.attachments().observeDraft(draftId)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    var attaching by mutableIntStateOf(0)
+        private set
+
+    /** Copies picked or dropped files into the draft. */
+    fun attach(uris: List<Uri>, resolver: ContentResolver) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            attaching += uris.size
+            for (uri in uris) {
+                try {
+                    mailAttachments.addToDraft(draftId, uri, resolver)
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    error = "Couldn't attach a file: ${e.message ?: "it may have moved"}"
+                } finally {
+                    attaching -= 1
+                }
+            }
+            if (attachments.value.sumOf { it.size } > MessageComposer.MAX_ATTACHMENT_BYTES) {
+                error = "These attachments are too large to send. iCloud accepts about 14 MB of files per message."
+            }
+        }
+    }
+
+    fun removeAttachment(attachment: DraftAttachmentEntity) {
+        viewModelScope.launch {
+            mailAttachments.removeFromDraft(attachment)
+            if (attachments.value.sumOf { it.size } - attachment.size <= MessageComposer.MAX_ATTACHMENT_BYTES &&
+                error?.contains("too large") == true
+            ) {
+                error = null
+            }
+        }
+    }
+
     var to by mutableStateOf("")
     var cc by mutableStateOf("")
     var bcc by mutableStateOf("")

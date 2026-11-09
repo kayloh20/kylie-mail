@@ -2,6 +2,7 @@ package com.kayloh20.kyliemail.data
 
 import androidx.room.withTransaction
 import com.kayloh20.kyliemail.data.db.ActionType
+import com.kayloh20.kyliemail.data.db.AttachmentEntity
 import com.kayloh20.kyliemail.data.db.MailDatabase
 import com.kayloh20.kyliemail.data.db.MessageEntity
 import com.kayloh20.kyliemail.data.db.PendingAction
@@ -19,6 +20,7 @@ class UndoToken internal constructor(
     internal val actionIds: List<Long>,
     internal val removed: List<MessageEntity>,
     internal val filingExampleIds: List<Long> = emptyList(),
+    internal val attachments: List<AttachmentEntity> = emptyList(),
 )
 
 data class ActionResult(
@@ -46,6 +48,7 @@ class MailActions(
     private val folderDao = db.folders()
     private val messageDao = db.messages()
     private val actionDao = db.actions()
+    private val attachmentDao = db.attachments()
     private var flushJob: Job? = null
     @Volatile private var flushAgain = false
 
@@ -69,6 +72,7 @@ class MailActions(
 
         val actionIds = mutableListOf<Long>()
         val removed = mutableListOf<MessageEntity>()
+        val removedAttachments = mutableListOf<AttachmentEntity>()
         val handled = mutableListOf<Long>()
         var targetName: String? = null
         var targetFullName: String? = null
@@ -104,6 +108,8 @@ class MailActions(
                     ActionType.FLAG -> messageDao.setFlagged(message.id, true)
                     ActionType.UNFLAG -> messageDao.setFlagged(message.id, false)
                     ActionType.MOVE, ActionType.DELETE_PERMANENTLY -> {
+                        // Kept for Undo: deleting the message also deletes its attachment list.
+                        removedAttachments += attachmentDao.forMessage(message.id)
                         messageDao.deleteById(message.id)
                         if (!message.isSeen) folderDao.adjustUnread(folder.id, -1)
                         removed += message
@@ -142,7 +148,7 @@ class MailActions(
         } else {
             requestFlush()
         }
-        return ActionResult(actionIds.size, if (held) UndoToken(actionIds, removed, learned) else null, targetName)
+        return ActionResult(actionIds.size, if (held) UndoToken(actionIds, removed, learned, removedAttachments) else null, targetName)
     }
 
     /** Puts removed messages back if their actions haven't been sent yet. Returns false if it was too late. */
@@ -151,6 +157,7 @@ class MailActions(
             val cancelled = actionDao.deleteAll(token.actionIds)
             if (cancelled != token.actionIds.size) return@withTransaction false
             messageDao.insertAll(token.removed)
+            if (token.attachments.isNotEmpty()) attachmentDao.insertAll(token.attachments)
             token.removed.filter { !it.isSeen }.groupingBy { it.folderId }.eachCount().forEach { (folderId, count) ->
                 folderDao.adjustUnread(folderId, count)
             }

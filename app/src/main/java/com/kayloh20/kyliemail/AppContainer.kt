@@ -6,6 +6,8 @@ import com.kayloh20.kyliemail.data.MailRepository
 import com.kayloh20.kyliemail.data.MoveHistory
 import com.kayloh20.kyliemail.data.filing.FilingEngine
 import com.kayloh20.kyliemail.data.compose.Outbox
+import com.kayloh20.kyliemail.data.MailAttachments
+import com.kayloh20.kyliemail.data.mail.AttachmentFiles
 import com.kayloh20.kyliemail.data.filing.FolderSuggestion
 import com.kayloh20.kyliemail.data.notify.MailNotifier
 import com.kayloh20.kyliemail.data.settings.AppSettings
@@ -41,9 +43,10 @@ class AppContainer(context: Context) {
     private suspend fun filingSuggestionFor(messageId: Long): FolderSuggestion? =
         if (!settings.filingSuggestions.value) null else filing.suggest(listOf(messageId), limit = 1).firstOrNull()?.takeIf { it.confident }
 
-    val outbox = Outbox(context, database, credentials, settings, syncEngine, notifier, appScope)
+    val attachments = MailAttachments(database, syncEngine, AttachmentFiles(context.cacheDir, context.filesDir))
+    val outbox = Outbox(context, database, credentials, settings, syncEngine, notifier, attachments, appScope)
 
     val repository = MailRepository(
-        database, credentials, syncEngine, syncScheduler, inlineImages, imageTrust, actions, notifier, moveHistory,
+        database, credentials, syncEngine, syncScheduler, inlineImages, imageTrust, actions, notifier, moveHistory, attachments.files,
     )
 }

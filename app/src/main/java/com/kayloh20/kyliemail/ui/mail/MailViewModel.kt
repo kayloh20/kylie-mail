@@ -4,6 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kayloh20.kyliemail.data.MailRepository
 import com.kayloh20.kyliemail.data.UndoToken
+import com.kayloh20.kyliemail.data.MailAttachments
+import com.kayloh20.kyliemail.data.db.AttachmentEntity
+import android.content.ContentResolver
+import android.net.Uri
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.kayloh20.kyliemail.data.compose.Outbox
 import com.kayloh20.kyliemail.data.compose.ReplyMode
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -54,6 +61,7 @@ class MailViewModel(
     private val filing: FilingEngine,
     private val settings: AppSettings,
     private val outbox: Outbox,
+    private val mailAttachments: MailAttachments,
 ) : ViewModel() {
 
     val folders: StateFlow<List<FolderEntity>> =
@@ -265,6 +273,71 @@ class MailViewModel(
                 notice.restore?.let { _selection.value = it }
             } else {
                 _notice.value = Notice("Too late to undo. The change was already sent to iCloud.")
+            }
+        }
+    }
+
+    // Attachments
+
+    /** Files in the open message. */
+    val attachments: StateFlow<List<AttachmentEntity>> = selectedMessageId
+        .flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repository.attachments(id) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val _downloading = MutableStateFlow<Set<Long>>(emptySet())
+    val downloading: StateFlow<Set<Long>> = _downloading.asStateFlow()
+
+    sealed interface FileEvent {
+        data class Open(val file: File, val mimeType: String) : FileEvent
+        data class ChooseSaveLocation(val attachment: AttachmentEntity) : FileEvent
+    }
+
+    private val _fileEvents = MutableSharedFlow<FileEvent>(extraBufferCapacity = 4)
+    val fileEvents: SharedFlow<FileEvent> = _fileEvents.asSharedFlow()
+
+    fun openAttachment(attachment: AttachmentEntity) {
+        withDownload(attachment) { file -> _fileEvents.emit(FileEvent.Open(file, attachment.mimeType)) }
+    }
+
+    /** A click on a file card inside the message text. */
+    fun openAttachmentAt(path: String) {
+        val messageId = selectedMessageId.value ?: return
+        viewModelScope.launch {
+            val id = mailAttachments.idForPath(messageId, path) ?: return@launch
+            attachments.value.firstOrNull { it.id == id }?.let(::openAttachment)
+        }
+    }
+
+    fun saveAttachment(attachment: AttachmentEntity) {
+        viewModelScope.launch { _fileEvents.emit(FileEvent.ChooseSaveLocation(attachment)) }
+    }
+
+    /** Writes the attachment to the place picked in the system's save dialog. */
+    fun writeAttachment(attachment: AttachmentEntity, destination: Uri, resolver: ContentResolver) {
+        withDownload(attachment) { file ->
+            withContext(Dispatchers.IO) {
+                resolver.openOutputStream(destination)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+                    ?: throw java.io.IOException("Couldn't write the file.")
+            }
+            _notice.value = Notice("Saved ${attachment.filename}")
+        }
+    }
+
+    fun showProblem(text: String) {
+        _notice.value = Notice(text)
+    }
+
+    private fun withDownload(attachment: AttachmentEntity, then: suspend (File) -> Unit) {
+        if (attachment.id in _downloading.value) return
+        viewModelScope.launch {
+            _downloading.value = _downloading.value + attachment.id
+            try {
+                then(mailAttachments.file(attachment.id))
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                _notice.value = Notice("Couldn't get ${attachment.filename}: ${e.message ?: "connection problem"}")
+            } finally {
+                _downloading.value = _downloading.value - attachment.id
             }
         }
     }

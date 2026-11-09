@@ -46,7 +46,7 @@ class ComposeActivity : ComponentActivity() {
         container.notifier.clearSendFailure(draftId)
         viewModel = ViewModelProvider(
             this,
-            viewModelFactory { initializer { ComposeViewModel(draftId, container.outbox, container.settings, container.database, container.credentials) } },
+            viewModelFactory { initializer { ComposeViewModel(draftId, container.outbox, container.settings, container.database, container.credentials, container.attachments) } },
         )[ComposeViewModel::class.java]
 
         setContent {

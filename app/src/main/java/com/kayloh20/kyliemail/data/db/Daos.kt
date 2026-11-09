@@ -78,8 +78,10 @@ interface MessageDao {
     @Query("UPDATE messages SET isSeen = :seen, isFlagged = :flagged, isAnswered = :answered WHERE folderId = :folderId AND uid = :uid")
     suspend fun updateFlags(folderId: Long, uid: Long, seen: Boolean, flagged: Boolean, answered: Boolean)
 
-    @Query("UPDATE messages SET bodyText = :text, bodyHtml = :html, preview = :preview, bodyLoaded = 1 WHERE id = :id")
-    suspend fun setBody(id: Long, text: String?, html: String?, preview: String)
+    @Query(
+        "UPDATE messages SET bodyText = :text, bodyHtml = :html, preview = :preview, hasAttachments = :hasAttachments, bodyLoaded = 1 WHERE id = :id",
+    )
+    suspend fun setBody(id: Long, text: String?, html: String?, preview: String, hasAttachments: Boolean)
 
     @Query("DELETE FROM messages WHERE folderId = :folderId AND uid IN (:uids)")
     suspend fun deleteUids(folderId: Long, uids: List<Long>)
@@ -177,6 +179,39 @@ interface DraftDao {
         """,
     )
     suspend fun contacts(pattern: String, limit: Int): List<Contact>
+}
+
+@Dao
+interface AttachmentDao {
+    @Query("SELECT * FROM attachments WHERE messageId = :messageId ORDER BY id")
+    fun observeFor(messageId: Long): Flow<List<AttachmentEntity>>
+
+    @Query("SELECT * FROM attachments WHERE messageId = :messageId ORDER BY id")
+    suspend fun forMessage(messageId: Long): List<AttachmentEntity>
+
+    @Query("SELECT * FROM attachments WHERE id = :id")
+    suspend fun get(id: Long): AttachmentEntity?
+
+    @Query("SELECT * FROM attachments WHERE messageId = :messageId AND path = :path")
+    suspend fun byPath(messageId: Long, path: String): AttachmentEntity?
+
+    @Query("DELETE FROM attachments WHERE messageId = :messageId")
+    suspend fun deleteFor(messageId: Long)
+
+    @Insert
+    suspend fun insertAll(attachments: List<AttachmentEntity>)
+
+    @Query("SELECT * FROM draft_attachments WHERE draftId = :draftId ORDER BY id")
+    fun observeDraft(draftId: Long): Flow<List<DraftAttachmentEntity>>
+
+    @Query("SELECT * FROM draft_attachments WHERE draftId = :draftId ORDER BY id")
+    suspend fun forDraft(draftId: Long): List<DraftAttachmentEntity>
+
+    @Insert
+    suspend fun insertDraft(attachment: DraftAttachmentEntity): Long
+
+    @Query("DELETE FROM draft_attachments WHERE id = :id")
+    suspend fun deleteDraft(id: Long)
 }
 
 @Dao

@@ -1,9 +1,13 @@
 package com.kayloh20.kyliemail.data.compose
 
+import java.io.File
 import java.util.Date
 import java.util.UUID
 import javax.mail.Message
+import javax.mail.Part
 import javax.mail.Session
+import javax.mail.internet.MimeBodyPart
+import javax.mail.internet.MimeMultipart
 import javax.mail.internet.AddressException
 import javax.mail.internet.InternetAddress
 import javax.mail.internet.MimeMessage
@@ -21,7 +25,11 @@ data class Outgoing(
     val references: String?,
     val messageId: String,
     val date: Date,
+    val attachments: List<OutgoingAttachment> = emptyList(),
 )
+
+/** A file to send, already copied into the app. */
+data class OutgoingAttachment(val file: File, val filename: String, val mimeType: String)
 
 /**
  * Builds outgoing mail as a single plain-text part: no HTML version, no tracking, no extra headers.
@@ -72,10 +80,33 @@ object MessageComposer {
         message.sentDate = outgoing.date
         outgoing.inReplyTo?.let { message.setHeader("In-Reply-To", it) }
         outgoing.references?.let { message.setHeader("References", it) }
-        message.setText(outgoing.body.replace("\r\n", "\n"), "UTF-8")
+        val text = outgoing.body.replace("\r\n", "\n")
+        if (outgoing.attachments.isEmpty()) {
+            message.setText(text, "UTF-8")
+        } else {
+            // Text first, then each file as a standard attachment. Still no HTML anywhere.
+            val parts = MimeMultipart("mixed")
+            parts.addBodyPart(MimeBodyPart().apply { setText(text, "UTF-8") })
+            for (attachment in outgoing.attachments) {
+                parts.addBodyPart(
+                    MimeBodyPart().apply {
+                        attachFile(attachment.file, attachment.mimeType.ifBlank { "application/octet-stream" }, "base64")
+                        fileName = attachment.filename
+                        disposition = Part.ATTACHMENT
+                    },
+                )
+            }
+            message.setContent(parts)
+        }
         message.saveChanges()
         return message
     }
+
+    /**
+     * iCloud accepts messages up to 20 MB including encoding, which makes files about a third larger,
+     * so this leaves room for the text and headers.
+     */
+    const val MAX_ATTACHMENT_BYTES = 14L * 1024 * 1024
 
     /** Headers the SMTP transport leaves out when sending; Bcc recipients must stay invisible. */
     val WIRE_EXCLUDED_HEADERS = arrayOf("Bcc", "Content-Length")

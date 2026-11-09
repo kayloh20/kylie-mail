@@ -85,7 +85,9 @@ class MainActivity : ComponentActivity() {
                         key(signedIn.email) {
                             val vm: MailViewModel = viewModel(
                                 key = "mail:${signedIn.email}",
-                                factory = factoryOf { MailViewModel(container.repository, container.filing, container.settings, container.outbox) },
+                                factory = factoryOf {
+                                    MailViewModel(container.repository, container.filing, container.settings, container.outbox, container.attachments)
+                                },
                             )
                             val openRequest by openRequests.collectAsStateWithLifecycle()
                             MailScreen(

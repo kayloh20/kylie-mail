@@ -13,7 +13,8 @@ import com.kayloh20.kyliemail.data.db.FilingExampleEntity
 import com.kayloh20.kyliemail.data.mail.FolderRole
 import com.kayloh20.kyliemail.data.mail.ImapConnector
 import com.kayloh20.kyliemail.data.mail.InlineImageStore
-import com.kayloh20.kyliemail.data.mail.extractBody
+import com.kayloh20.kyliemail.data.mail.BodyParser
+import com.kayloh20.kyliemail.data.db.AttachmentEntity
 import com.kayloh20.kyliemail.data.mail.makePreview
 import com.sun.mail.imap.IMAPFolder
 import com.sun.mail.imap.IMAPStore
@@ -59,6 +60,7 @@ class SyncEngine(
     private val folderDao = db.folders()
     private val messageDao = db.messages()
     private val actionDao = db.actions()
+    private val attachmentDao = db.attachments()
 
     /** Called after the inbox has been synced, so notifications can be updated. */
     var inboxListener: (suspend (FolderEntity) -> Unit)? = null
@@ -157,6 +159,40 @@ class SyncEngine(
                 }
             }
         }
+
+    /**
+     * Downloads one part of a message (an attachment) to [target], writing to a temporary file first
+     * so a broken download never leaves a half file behind.
+     */
+    suspend fun downloadPart(folderName: String, uid: Long, path: String, target: java.io.File) = useConnection { store ->
+        val folder = store.getFolder(folderName) as IMAPFolder
+        folder.open(Folder.READ_ONLY)
+        try {
+            val message = folder.getMessageByUID(uid) ?: throw MessagingException("The message is no longer on the server.")
+            val part = findPart(message, path) ?: throw MessagingException("The attachment is no longer in the message.")
+            target.parentFile?.mkdirs()
+            val partial = java.io.File(target.parentFile, target.name + ".part")
+            part.inputStream.use { input -> partial.outputStream().use { input.copyTo(it) } }
+            if (!partial.renameTo(target)) throw IOException("Couldn't save the attachment.")
+        } finally {
+            runCatching { folder.close(false) }
+        }
+    }
+
+    /** Finds a part by IMAP section number, such as "2" or "1.3". */
+    fun findPart(message: javax.mail.Part, path: String): javax.mail.Part? {
+        var current: javax.mail.Part = message
+        for (index in path.split('.').map { it.toIntOrNull() ?: return null }) {
+            val multipart = current.content as? javax.mail.Multipart
+            current = when {
+                multipart != null -> if (index in 1..multipart.count) multipart.getBodyPart(index - 1) else return null
+                // A single-part message's body is section 1.
+                index == 1 -> current
+                else -> return null
+            }
+        }
+        return current
+    }
 
     /** Runs [block] on the shared IMAP connection, reconnecting once if it has gone stale. */
     suspend fun <T> useConnection(block: suspend (IMAPStore) -> T): T = withContext(Dispatchers.IO) { withConnection(block) }
@@ -468,9 +504,24 @@ class SyncEngine(
     private suspend fun downloadBodies(remote: IMAPFolder, messages: List<MessageEntity>) {
         for (message in messages) {
             val serverMessage = runCatching { remote.getMessageByUID(message.uid) }.getOrNull() ?: continue
-            val body = runCatching { extractBody(serverMessage) }.getOrNull() ?: continue
-            runCatching { inlineImages.save(message.id, body.inlineParts) }
-            messageDao.setBody(message.id, body.text, body.html, makePreview(body.text, body.html))
+            val body = runCatching { BodyParser.parse(serverMessage) }.getOrNull() ?: continue
+            runCatching { inlineImages.save(message.id, body.inlineImages) }
+            db.withTransaction {
+                attachmentDao.deleteFor(message.id)
+                attachmentDao.insertAll(
+                    body.attachments.map {
+                        AttachmentEntity(
+                            messageId = message.id,
+                            path = it.path,
+                            filename = it.filename,
+                            mimeType = it.mimeType,
+                            size = it.size,
+                            inBody = it.inBody,
+                        )
+                    },
+                )
+                messageDao.setBody(message.id, body.text, body.html, makePreview(body.text, body.html), body.attachments.isNotEmpty())
+            }
         }
     }
 

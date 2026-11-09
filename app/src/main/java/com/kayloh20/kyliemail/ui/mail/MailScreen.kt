@@ -47,6 +47,8 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import com.kayloh20.kyliemail.data.MailActions
+import com.kayloh20.kyliemail.data.db.AttachmentEntity
+import androidx.compose.runtime.mutableStateOf
 import com.kayloh20.kyliemail.data.compose.ReplyMode
 import com.kayloh20.kyliemail.ui.compose.ComposeActivity
 import kotlinx.coroutines.withTimeoutOrNull
@@ -94,6 +96,34 @@ fun MailScreen(
     LaunchedEffect(Unit) {
         viewModel.composeRequests.collect { draftId -> ComposeActivity.open(composeContext, draftId) }
     }
+
+    val attachments by viewModel.attachments.collectAsStateWithLifecycle()
+    val downloading by viewModel.downloading.collectAsStateWithLifecycle()
+    var saving by remember { mutableStateOf<AttachmentEntity?>(null) }
+    val saveLauncher = rememberLauncherForActivityResult(SaveFileContract()) { uri ->
+        val attachment = saving
+        saving = null
+        if (uri != null && attachment != null) viewModel.writeAttachment(attachment, uri, composeContext.contentResolver)
+    }
+    LaunchedEffect(Unit) {
+        viewModel.fileEvents.collect { event ->
+            when (event) {
+                is MailViewModel.FileEvent.Open ->
+                    openAttachmentFile(composeContext, event.file, event.mimeType)?.let(viewModel::showProblem)
+                is MailViewModel.FileEvent.ChooseSaveLocation -> {
+                    saving = event.attachment
+                    saveLauncher.launch(event.attachment.filename to event.attachment.mimeType)
+                }
+            }
+        }
+    }
+    val files = FileActions(
+        attachments = attachments,
+        busy = downloading,
+        onOpen = viewModel::openAttachment,
+        onSave = viewModel::saveAttachment,
+        onOpenInBody = viewModel::openAttachmentAt,
+    )
     val snackbarHost = remember { SnackbarHostState() }
 
     // Show each notice; ones with Undo stay up for the undo window.
@@ -245,6 +275,7 @@ fun MailScreen(
         onFile = viewModel::moveSelected,
         onTrainFiling = onOpenTraining,
         writing = writing,
+        files = files,
         onBack = if (showBack) ({ viewModel.clearSelection() }) else null,
         modifier = paneModifier,
     )

@@ -28,6 +28,7 @@ class MailRepository(
     private val actions: MailActions,
     private val notifier: MailNotifier,
     private val moveHistory: MoveHistory,
+    private val attachmentFiles: com.kayloh20.kyliemail.data.mail.AttachmentFiles? = null,
 ) {
     suspend fun perform(messageId: Long, action: UserAction): Boolean = actions.perform(messageId, action)
 
@@ -57,6 +58,8 @@ class MailRepository(
 
     fun message(id: Long): Flow<MessageEntity?> = db.messages().observe(id)
 
+    fun attachments(messageId: Long): Flow<List<com.kayloh20.kyliemail.data.db.AttachmentEntity>> = db.attachments().observeFor(messageId)
+
     suspend fun refresh(focusFolderId: Long?): SyncOutcome = syncEngine.sync(focusFolderId)
 
     suspend fun refreshFolder(folderId: Long): SyncOutcome = syncEngine.syncFolder(folderId)
@@ -77,6 +80,7 @@ class MailRepository(
             imageTrust.clear()
             notifier.clearAll()
             moveHistory.clear()
+            attachmentFiles?.clear()
         }
         syncEngine.disconnect()
     }

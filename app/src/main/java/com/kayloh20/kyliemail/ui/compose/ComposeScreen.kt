@@ -1,6 +1,28 @@
 package com.kayloh20.kyliemail.ui.compose
 
+import android.app.Activity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.draganddrop.dragAndDropTarget
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.draganddrop.DragAndDropEvent
+import androidx.compose.ui.draganddrop.DragAndDropTarget
+import androidx.compose.ui.draganddrop.mimeTypes
+import androidx.compose.ui.draganddrop.toAndroidDragEvent
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.kayloh20.kyliemail.data.compose.MessageComposer
+import com.kayloh20.kyliemail.data.db.DraftAttachmentEntity
+import com.kayloh20.kyliemail.data.mail.BodyParser
+import com.kayloh20.kyliemail.ui.mail.iconFor
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -63,6 +85,38 @@ import com.kayloh20.kyliemail.ui.theme.KylieTheme
 @Composable
 fun ComposeScreen(viewModel: ComposeViewModel, onFinished: () -> Unit, modifier: Modifier = Modifier) {
     val bodyFocus = remember { FocusRequester() }
+    val context = LocalContext.current
+    val attachments by viewModel.attachments.collectAsStateWithLifecycle()
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        viewModel.attach(uris, context.contentResolver)
+    }
+    var dropping by remember { mutableStateOf(false) }
+    // Files dragged in from the Files app (or anywhere else) are attached.
+    val dropTarget = remember(viewModel) {
+        object : DragAndDropTarget {
+            override fun onDrop(event: DragAndDropEvent): Boolean {
+                dropping = false
+                val drag = event.toAndroidDragEvent()
+                (context as? Activity)?.requestDragAndDropPermissions(drag)
+                val clip = drag.clipData ?: return false
+                val uris = (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri }
+                viewModel.attach(uris, context.contentResolver)
+                return uris.isNotEmpty()
+            }
+
+            override fun onEntered(event: DragAndDropEvent) {
+                dropping = true
+            }
+
+            override fun onExited(event: DragAndDropEvent) {
+                dropping = false
+            }
+
+            override fun onEnded(event: DragAndDropEvent) {
+                dropping = false
+            }
+        }
+    }
     val toFocus = remember { FocusRequester() }
     var confirmDiscard by remember { mutableStateOf(false) }
 
@@ -73,8 +127,13 @@ fun ComposeScreen(viewModel: ComposeViewModel, onFinished: () -> Unit, modifier:
         runCatching { if (viewModel.firstFocus == FirstFocus.TO) toFocus.requestFocus() else bodyFocus.requestFocus() }
     }
 
-    Column(
+    Box(
         modifier
+            .fillMaxSize()
+            .dragAndDropTarget(shouldStartDragAndDrop = { event -> event.mimeTypes().isNotEmpty() }, target = dropTarget),
+    ) {
+    Column(
+        Modifier
             .fillMaxSize()
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -93,6 +152,7 @@ fun ComposeScreen(viewModel: ComposeViewModel, onFinished: () -> Unit, modifier:
         ) {
             TooltipIconButton(Icons.Outlined.Close, "Close and keep draft (Esc)", { viewModel.close(onFinished) })
             Text(viewModel.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.weight(1f).padding(start = 8.dp))
+            TooltipIconButton(Icons.Outlined.AttachFile, "Attach files", { picker.launch(arrayOf("*/*")) })
             TooltipIconButton(Icons.Outlined.Delete, "Discard draft", { confirmDiscard = true })
             Spacer(Modifier.width(8.dp))
             Button(onClick = { viewModel.send(onFinished) }, shape = MaterialTheme.shapes.small, enabled = viewModel.loaded) {
@@ -103,7 +163,7 @@ fun ComposeScreen(viewModel: ComposeViewModel, onFinished: () -> Unit, modifier:
         }
 
         viewModel.error?.let { Banner(it, error = true) }
-        if (viewModel.missingAttachments) Banner("Attachments from the original message aren't included yet.", error = false)
+        if (viewModel.missingAttachments) Banner("Some attachments from the original couldn't be included. Check your connection and forward again.", error = false)
 
         HeaderRow("From") {
             Text(viewModel.from, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -124,6 +184,9 @@ fun ComposeScreen(viewModel: ComposeViewModel, onFinished: () -> Unit, modifier:
         }
         HeaderRow("Subject") {
             PlainField(viewModel.subject, { viewModel.subject = it }, capitalize = true)
+        }
+        if (attachments.isNotEmpty() || viewModel.attaching > 0) {
+            DraftAttachments(attachments, viewModel.attaching, viewModel::removeAttachment)
         }
 
         Box(
@@ -146,6 +209,19 @@ fun ComposeScreen(viewModel: ComposeViewModel, onFinished: () -> Unit, modifier:
             )
         }
     }
+        if (dropping) {
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .padding(12.dp)
+                    .border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
+                    .background(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.shapes.large),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("Drop files to attach", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
 
     if (viewModel.confirmEmptySubject) {
         AlertDialog(
@@ -166,6 +242,53 @@ fun ComposeScreen(viewModel: ComposeViewModel, onFinished: () -> Unit, modifier:
             dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("Keep editing") } },
         )
     }
+}
+
+@Composable
+private fun DraftAttachments(attachments: List<DraftAttachmentEntity>, attaching: Int, onRemove: (DraftAttachmentEntity) -> Unit) {
+    val total = attachments.sumOf { it.size }
+    Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 6.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            attachments.forEach { attachment ->
+                Surface(
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 10.dp)) {
+                        Icon(iconFor(attachment.mimeType), null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            attachment.filename,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.MiddleEllipsis,
+                            modifier = Modifier.widthIn(max = 200.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(BodyParser.formatSize(attachment.size), style = MaterialTheme.typography.labelSmall, color = KylieTheme.colors.textMuted)
+                        TooltipIconButton(Icons.Outlined.Close, "Remove ${attachment.filename}", { onRemove(attachment) })
+                    }
+                }
+            }
+            if (attaching > 0) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(8.dp)) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Attaching…", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        if (attachments.size > 1) {
+            Text(
+                "${attachments.size} files · ${BodyParser.formatSize(total)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (total > MessageComposer.MAX_ATTACHMENT_BYTES) MaterialTheme.colorScheme.error else KylieTheme.colors.textMuted,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+    }
+    HorizontalDivider(Modifier.padding(horizontal = 24.dp))
 }
 
 @Composable

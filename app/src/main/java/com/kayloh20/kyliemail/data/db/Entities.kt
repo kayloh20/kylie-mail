@@ -185,3 +185,37 @@ data class DraftEntity(
     val lastError: String? = null,
     val updatedAt: Long = 0,
 )
+
+/** A file in a received message. The content is downloaded only when opened or saved. */
+@Entity(
+    tableName = "attachments",
+    foreignKeys = [ForeignKey(entity = MessageEntity::class, parentColumns = ["id"], childColumns = ["messageId"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index(value = ["messageId"])],
+)
+data class AttachmentEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val messageId: Long,
+    /** IMAP section number, such as "2" or "1.3". */
+    val path: String,
+    val filename: String,
+    val mimeType: String,
+    val size: Long,
+    /** Shown inside the message text (Apple Mail style) as well as in the list. */
+    val inBody: Boolean,
+)
+
+/** A file attached to a draft, copied into the app so it can still be sent if the original moves. */
+@Entity(
+    tableName = "draft_attachments",
+    foreignKeys = [ForeignKey(entity = DraftEntity::class, parentColumns = ["id"], childColumns = ["draftId"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index(value = ["draftId"])],
+)
+data class DraftAttachmentEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val draftId: Long,
+    val filename: String,
+    val mimeType: String,
+    val size: Long,
+    /** Absolute path of the app's copy. */
+    val path: String,
+)

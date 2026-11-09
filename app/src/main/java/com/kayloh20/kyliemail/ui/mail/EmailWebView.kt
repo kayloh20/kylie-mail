@@ -37,12 +37,15 @@ fun EmailWebView(
     allowRemote: Boolean,
     inlineImages: InlineImageStore,
     onRemoteBlocked: () -> Unit,
+    onOpenAttachment: (path: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val currentOnRemoteBlocked by rememberUpdatedState(onRemoteBlocked)
+    val currentOnOpenAttachment by rememberUpdatedState(onOpenAttachment)
     val client = remember { EmailWebViewClient(context.applicationContext, inlineImages) }
     client.onRemoteBlocked = { currentOnRemoteBlocked() }
+    client.onOpenAttachment = { currentOnOpenAttachment(it) }
 
     AndroidView(
         modifier = modifier,
@@ -93,6 +96,7 @@ class EmailWebViewClient(
     @Volatile var allowRemote: Boolean = false
     var onRemoteBlocked: () -> Unit = {}
     var onPageFinished: ((WebView) -> Unit)? = null
+    var onOpenAttachment: (path: String) -> Unit = {}
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -114,7 +118,14 @@ class EmailWebViewClient(
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         // Navigations the user didn't click (meta refresh, for example) are dropped.
-        if (request.isForMainFrame && request.hasGesture()) openExternally(request.url)
+        if (!request.isForMainFrame || !request.hasGesture()) return true
+        val url = request.url
+        // File cards in the message text open the attachment in the app.
+        if (url.host == EmailHtml.INLINE_HOST && url.path?.startsWith("/attachment/") == true) {
+            onOpenAttachment(url.path!!.removePrefix("/attachment/"))
+        } else {
+            openExternally(url)
+        }
         return true
     }
 

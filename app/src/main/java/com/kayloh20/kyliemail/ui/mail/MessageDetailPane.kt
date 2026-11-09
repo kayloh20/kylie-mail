@@ -51,6 +51,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kayloh20.kyliemail.data.db.MessageEntity
+import com.kayloh20.kyliemail.data.db.AttachmentEntity
 import com.kayloh20.kyliemail.data.filing.FolderSuggestion
 import com.kayloh20.kyliemail.data.mail.InlineImageStore
 
@@ -77,6 +78,7 @@ fun MessageDetailPane(
     onFile: (Long) -> Unit,
     onTrainFiling: () -> Unit,
     writing: WritingActions,
+    files: FileActions,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
@@ -137,6 +139,7 @@ fun MessageDetailPane(
         )
         MessageHeader(message = message)
         SuggestionBar(suggestions, filingTrained, onFile, onTrainFiling)
+        AttachmentStrip(files.attachments, files.busy, files.onOpen, files.onSave)
         HorizontalDivider()
 
         if (remoteBlocked && !remoteImagesAllowed) {
@@ -154,6 +157,7 @@ fun MessageDetailPane(
                 allowRemote = remoteImagesAllowed,
                 inlineImages = inlineImages,
                 onRemoteBlocked = { remoteBlocked = true },
+                onOpenAttachment = files.onOpenInBody,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
             )
             message.bodyLoaded -> Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
@@ -215,6 +219,15 @@ private fun MessageToolbar(
         if (onPrint != null) TooltipIconButton(Icons.Outlined.Print, "Print or save as PDF", onPrint)
     }
 }
+
+/** The open message's files and what clicking them does. */
+data class FileActions(
+    val attachments: List<AttachmentEntity>,
+    val busy: Set<Long>,
+    val onOpen: (AttachmentEntity) -> Unit,
+    val onSave: (AttachmentEntity) -> Unit,
+    val onOpenInBody: (String) -> Unit,
+)
 
 /** Reply, reply all, forward, and editing a saved draft. */
 data class WritingActions(

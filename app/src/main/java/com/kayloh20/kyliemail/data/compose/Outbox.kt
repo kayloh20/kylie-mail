@@ -11,6 +11,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.kayloh20.kyliemail.KylieMailApp
+import com.kayloh20.kyliemail.data.MailAttachments
 import com.kayloh20.kyliemail.data.account.Account
 import com.kayloh20.kyliemail.data.account.CredentialStore
 import com.kayloh20.kyliemail.data.db.DraftEntity
@@ -56,8 +57,10 @@ class Outbox(
     private val settings: AppSettings,
     private val syncEngine: SyncEngine,
     private val notifier: MailNotifier,
+    private val attachments: MailAttachments,
     private val scope: CoroutineScope,
 ) {
+    private val attachmentDao = db.attachments()
     private val drafts = db.drafts()
     private val smtp = SmtpSender()
     private val processLock = Mutex()
@@ -91,7 +94,7 @@ class Outbox(
             ownAddresses(),
             settings.signature.value,
         )
-        return drafts.insert(
+        val draftId = drafts.insert(
             DraftEntity(
                 toList = reply.to,
                 ccList = reply.cc,
@@ -101,17 +104,21 @@ class Outbox(
                 references = reply.references,
                 replyFolder = folder?.fullName?.takeIf { mode != ReplyMode.FORWARD },
                 replyUid = message.uid.takeIf { mode != ReplyMode.FORWARD },
-                missingAttachments = mode == ReplyMode.FORWARD && message.hasAttachments,
                 updatedAt = now(),
             ),
         )
+        // Forwards carry the original's files; if any can't be fetched (offline, say), the window says so.
+        if (mode == ReplyMode.FORWARD && !attachments.copyToDraft(messageId, draftId)) {
+            drafts.get(draftId)?.let { drafts.update(it.copy(missingAttachments = true)) }
+        }
+        return draftId
     }
 
     /** Opens a message from the iCloud Drafts folder for editing; it is replaced when saved or sent. */
     suspend fun editServerDraft(messageId: Long): Long? {
         val message = loadedMessage(messageId) ?: return null
         val folder = db.folders().getById(message.folderId) ?: return null
-        return drafts.insert(
+        val draftId = drafts.insert(
             DraftEntity(
                 toList = message.toList,
                 ccList = message.ccList,
@@ -122,6 +129,10 @@ class Outbox(
                 updatedAt = now(),
             ),
         )
+        if (!attachments.copyToDraft(messageId, draftId)) {
+            drafts.get(draftId)?.let { drafts.update(it.copy(missingAttachments = true)) }
+        }
+        return draftId
     }
 
     // Editing
@@ -145,6 +156,10 @@ class Outbox(
     suspend fun send(id: Long): String? {
         val draft = drafts.get(id) ?: return "This draft no longer exists."
         MessageComposer.validateRecipients(draft.toList, draft.ccList, draft.bccList)?.let { return it }
+        val total = attachmentDao.forDraft(id).sumOf { it.size }
+        if (total > MessageComposer.MAX_ATTACHMENT_BYTES) {
+            return "Attachments are too large to send. iCloud accepts messages up to 20 MB, which leaves about 14 MB for files."
+        }
         val account = credentials.account.value ?: return "You're signed out."
         drafts.update(
             draft.copy(
@@ -167,8 +182,9 @@ class Outbox(
     suspend fun close(id: Long) {
         val draft = drafts.get(id) ?: return
         if (draft.state != DraftState.EDITING) return
-        if (isEmpty(draft) && draft.serverDraftUid == null) {
+        if (isEmpty(draft) && draft.serverDraftUid == null && attachmentDao.forDraft(id).isEmpty()) {
             drafts.delete(id)
+            attachments.files.deleteDraftFiles(id)
             return
         }
         if (drafts.transition(id, DraftState.EDITING, DraftState.SAVING, now()) == 1) schedule(0)
@@ -178,6 +194,7 @@ class Outbox(
         val draft = drafts.get(id) ?: return
         if (draft.serverDraftUid == null) {
             drafts.delete(id)
+            attachments.files.deleteDraftFiles(id)
         } else if (drafts.transition(id, draft.state, DraftState.DISCARDING, now()) == 1) {
             schedule(0)
         }
@@ -283,6 +300,7 @@ class Outbox(
             }
         }
         drafts.delete(draft.id)
+        attachments.files.deleteDraftFiles(draft.id)
     }.isSuccess
 
     private suspend fun saveToServer(draft: DraftEntity, account: Account): Boolean = runCatching {
@@ -301,6 +319,7 @@ class Outbox(
             }
         }
         drafts.delete(draft.id)
+        attachments.files.deleteDraftFiles(draft.id)
         scope.launch { syncEngine.syncFolder(draftsFolder.id) }
     }.isSuccess
 
@@ -310,6 +329,7 @@ class Outbox(
             db.folders().getByName(draft.serverDraftFolder)?.let { scope.launch { syncEngine.syncFolder(it.id) } }
         }
         drafts.delete(draft.id)
+        attachments.files.deleteDraftFiles(draft.id)
     }.isSuccess
 
     private suspend fun setAnswered(store: IMAPStore, folderName: String, uid: Long) {
@@ -351,7 +371,7 @@ class Outbox(
         WorkManager.getInstance(context).enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
     }
 
-    private fun outgoing(draft: DraftEntity, account: Account) = Outgoing(
+    private suspend fun outgoing(draft: DraftEntity, account: Account) = Outgoing(
         fromAddress = account.email,
         fromName = settings.displayName.value.trim(),
         to = draft.toList,
@@ -363,6 +383,7 @@ class Outbox(
         references = draft.references,
         messageId = draft.messageId ?: MessageComposer.newMessageId(account.email),
         date = Date(),
+        attachments = attachmentDao.forDraft(draft.id).map { OutgoingAttachment(java.io.File(it.path), it.filename, it.mimeType) },
     )
 
     private suspend fun loadedMessage(messageId: Long) = db.messages().getById(messageId)?.let { message ->
