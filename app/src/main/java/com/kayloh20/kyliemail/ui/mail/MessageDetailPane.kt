@@ -14,6 +14,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Delete
@@ -48,6 +49,7 @@ import com.kayloh20.kyliemail.data.mail.InlineImageStore
 @Composable
 fun MessageDetailPane(
     message: MessageEntity?,
+    selectionCount: Int,
     bodyError: String?,
     remoteImagesAllowed: Boolean,
     inlineImages: InlineImageStore,
@@ -59,6 +61,8 @@ fun MessageDetailPane(
     onDelete: () -> Unit,
     onToggleRead: () -> Unit,
     onToggleFlag: () -> Unit,
+    onMove: () -> Unit,
+    onClearSelection: () -> Unit,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
@@ -71,6 +75,20 @@ fun MessageDetailPane(
                 navigationIcon = { TooltipIconButton(Icons.AutoMirrored.Outlined.ArrowBack, "Back", onBack) },
                 windowInsets = WindowInsets(0),
             )
+        }
+
+        if (selectionCount > 1) {
+            BulkSelection(
+                count = selectionCount,
+                canArchive = canArchive,
+                onArchive = onArchive,
+                onDelete = onDelete,
+                onToggleRead = onToggleRead,
+                onToggleFlag = onToggleFlag,
+                onMove = onMove,
+                onClearSelection = onClearSelection,
+            )
+            return@Column
         }
 
         if (message == null) {
@@ -93,6 +111,7 @@ fun MessageDetailPane(
             onDelete = onDelete,
             onToggleRead = onToggleRead,
             onToggleFlag = onToggleFlag,
+            onMove = onMove,
             onPrint = if (message.bodyLoaded) {
                 { MessagePrinter.print(context, message, remoteImagesAllowed, inlineImages) }
             } else {
@@ -147,11 +166,13 @@ private fun MessageToolbar(
     onDelete: () -> Unit,
     onToggleRead: () -> Unit,
     onToggleFlag: () -> Unit,
+    onMove: () -> Unit,
     onPrint: (() -> Unit)?,
 ) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         if (canArchive) TooltipIconButton(Icons.Outlined.Archive, "Archive", onArchive)
-        TooltipIconButton(Icons.Outlined.Delete, "Delete", onDelete)
+        TooltipIconButton(Icons.Outlined.Delete, "Delete (Delete key)", onDelete)
+        TooltipIconButton(Icons.AutoMirrored.Outlined.DriveFileMove, "Move to… (Ctrl+Shift+M)", onMove)
         TooltipIconButton(
             if (message.isSeen) Icons.Outlined.MarkEmailUnread else Icons.Outlined.MarkEmailRead,
             if (message.isSeen) "Mark as unread" else "Mark as read",
@@ -164,6 +185,32 @@ private fun MessageToolbar(
         )
         Spacer(Modifier.weight(1f))
         if (onPrint != null) TooltipIconButton(Icons.Outlined.Print, "Print or save as PDF", onPrint)
+    }
+}
+
+@Composable
+private fun BulkSelection(
+    count: Int,
+    canArchive: Boolean,
+    onArchive: () -> Unit,
+    onDelete: () -> Unit,
+    onToggleRead: () -> Unit,
+    onToggleFlag: () -> Unit,
+    onMove: () -> Unit,
+    onClearSelection: () -> Unit,
+) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("$count messages selected", style = MaterialTheme.typography.titleLarge)
+            Row {
+                if (canArchive) TooltipIconButton(Icons.Outlined.Archive, "Archive", onArchive)
+                TooltipIconButton(Icons.Outlined.Delete, "Delete (Delete key)", onDelete)
+                TooltipIconButton(Icons.AutoMirrored.Outlined.DriveFileMove, "Move to… (Ctrl+Shift+M)", onMove)
+                TooltipIconButton(Icons.Outlined.MarkEmailRead, "Mark as read or unread", onToggleRead)
+                TooltipIconButton(Icons.Outlined.Flag, "Flag or remove flag", onToggleFlag)
+            }
+            TextButton(onClick = onClearSelection) { Text("Clear selection") }
+        }
     }
 }
 

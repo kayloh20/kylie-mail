@@ -55,7 +55,7 @@ fun FolderPane(
     }
 }
 
-private fun FolderRole.icon(): ImageVector = when (this) {
+internal fun FolderRole.icon(): ImageVector = when (this) {
     FolderRole.INBOX -> Icons.Outlined.Inbox
     FolderRole.DRAFTS -> Icons.Outlined.Drafts
     FolderRole.SENT -> Icons.AutoMirrored.Outlined.Send

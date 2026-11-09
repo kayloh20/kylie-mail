@@ -13,7 +13,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val messageId = intent.getLongExtra(EXTRA_MESSAGE_ID, -1)
         val action = intent.getStringExtra(EXTRA_ACTION)?.let { name -> UserAction.entries.firstOrNull { it.name == name } }
-        if (messageId < 0 || action == null) return
+        if (messageId < 0 || action == null || action == UserAction.MOVE) return
 
         val container = (context.applicationContext as KylieMailApp).container
         container.notifier.cancel(messageId)

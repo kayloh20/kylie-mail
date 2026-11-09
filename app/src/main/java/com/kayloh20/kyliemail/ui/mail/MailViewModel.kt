@@ -3,6 +3,7 @@ package com.kayloh20.kyliemail.ui.mail
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kayloh20.kyliemail.data.MailRepository
+import com.kayloh20.kyliemail.data.UndoToken
 import com.kayloh20.kyliemail.data.db.FolderEntity
 import com.kayloh20.kyliemail.data.db.MessageEntity
 import com.kayloh20.kyliemail.data.db.MessageSummary
@@ -16,11 +17,19 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/** Which folder picker is open: moving the selection, or jumping to a folder. */
+enum class PickerMode { MOVE, GO_TO }
+
+/** A short message at the bottom of the screen, with Undo when the change can still be taken back. */
+data class Notice(val text: String, val undo: UndoToken? = null, val restore: Selection? = null)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MailViewModel(private val repository: MailRepository) : ViewModel() {
@@ -31,20 +40,28 @@ class MailViewModel(private val repository: MailRepository) : ViewModel() {
     private val _selectedFolderId = MutableStateFlow<Long?>(null)
     val selectedFolderId: StateFlow<Long?> = _selectedFolderId.asStateFlow()
 
-    private val _selectedMessageId = MutableStateFlow<Long?>(null)
-    val selectedMessageId: StateFlow<Long?> = _selectedMessageId.asStateFlow()
-
     val messages: StateFlow<List<MessageSummary>> = _selectedFolderId
         .flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repository.messages(id) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    val selectedMessage: StateFlow<MessageEntity?> = _selectedMessageId
+    private val _selection = MutableStateFlow(Selection())
+    val selection: StateFlow<Selection> = _selection.asStateFlow()
+
+    /** The message in the reading pane: set when exactly one message is selected. */
+    val selectedMessageId: StateFlow<Long?> = _selection
+        .map { it.single }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val selectedMessage: StateFlow<MessageEntity?> = selectedMessageId
         .flatMapLatest { id -> if (id == null) flowOf(null) else repository.message(id) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val syncState: StateFlow<SyncState> = repository.syncState
 
     val inlineImages = repository.inlineImages
+
+    val recentMoveTargets: StateFlow<List<String>> = repository.recentMoveTargets
 
     private val _remoteAllowedFor = MutableStateFlow<Set<Long>>(emptySet())
 
@@ -54,18 +71,19 @@ class MailViewModel(private val repository: MailRepository) : ViewModel() {
             message != null && (message.id in allowed || message.fromAddress.lowercase() in trusted)
         }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    fun loadRemoteImages() {
-        val id = _selectedMessageId.value ?: return
-        _remoteAllowedFor.value = _remoteAllowedFor.value + id
-    }
-
-    fun trustSender() {
-        val address = selectedMessage.value?.fromAddress ?: return
-        repository.trustImageSender(address)
-    }
+    /** True when the open folder can archive, meaning an Archive folder exists and this isn't it. */
+    val canArchive: StateFlow<Boolean> = combine(folders, _selectedFolderId) { list, selected ->
+        list.any { it.role == FolderRole.ARCHIVE } && list.firstOrNull { it.id == selected }?.role != FolderRole.ARCHIVE
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _bodyError = MutableStateFlow<String?>(null)
     val bodyError: StateFlow<String?> = _bodyError.asStateFlow()
+
+    private val _picker = MutableStateFlow<PickerMode?>(null)
+    val picker: StateFlow<PickerMode?> = _picker.asStateFlow()
+
+    private val _notice = MutableStateFlow<Notice?>(null)
+    val notice: StateFlow<Notice?> = _notice.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -74,8 +92,21 @@ class MailViewModel(private val repository: MailRepository) : ViewModel() {
                 _selectedFolderId.value = (list.firstOrNull { it.role == FolderRole.INBOX } ?: list.first()).id
             }
         }
+        // Opening a message loads its body and marks it read.
+        viewModelScope.launch {
+            selectedMessageId.collect { id ->
+                _bodyError.value = null
+                if (id != null) {
+                    loadBody(id)
+                    val message = repository.messageById(id)
+                    if (message != null && !message.isSeen) repository.perform(id, UserAction.MARK_READ)
+                }
+            }
+        }
         refresh()
     }
+
+    // Folders
 
     fun refresh() {
         viewModelScope.launch { repository.refresh(_selectedFolderId.value) }
@@ -84,81 +115,152 @@ class MailViewModel(private val repository: MailRepository) : ViewModel() {
     fun selectFolder(id: Long) {
         if (_selectedFolderId.value == id) return
         _selectedFolderId.value = id
-        _selectedMessageId.value = null
+        _selection.value = Selection()
         viewModelScope.launch { repository.refreshFolder(id) }
     }
 
+    // Selection
+
+    private fun order() = messages.value.map { it.id }
+
+    fun click(id: Long, ctrl: Boolean, shift: Boolean) {
+        _selection.value = SelectionRules.click(_selection.value, order(), id, ctrl, shift)
+    }
+
+    /** Opens just this message (or closes the reading pane when null). */
     fun selectMessage(id: Long?) {
-        _selectedMessageId.value = id
-        _bodyError.value = null
-        if (id != null) {
-            loadBody(id)
-            viewModelScope.launch {
-                val message = repository.messageById(id)
-                if (message != null && !message.isSeen) repository.perform(id, UserAction.MARK_READ)
-            }
-        }
+        _selection.value = if (id == null) Selection() else Selection.of(id)
+    }
+
+    fun moveSelection(delta: Int, extend: Boolean = false) {
+        _selection.value = SelectionRules.move(_selection.value, order(), delta, extend)
+    }
+
+    fun selectAll() {
+        _selection.value = SelectionRules.selectAll(_selection.value, order())
+    }
+
+    fun clearSelection() {
+        _selection.value = Selection()
+    }
+
+    /** Right-clicking a message outside the selection selects it, as desktop apps do. */
+    fun prepareContextMenu(id: Long) {
+        if (id !in _selection.value.ids) _selection.value = Selection.of(id)
     }
 
     /** Opens a message from anywhere, such as a notification, switching to its folder. */
     fun openMessage(id: Long) {
         viewModelScope.launch {
             val message = repository.messageById(id) ?: return@launch
-            _selectedFolderId.value = message.folderId
-            selectMessage(id)
+            if (_selectedFolderId.value != message.folderId) {
+                _selectedFolderId.value = message.folderId
+                viewModelScope.launch { repository.refreshFolder(message.folderId) }
+            }
+            _selection.value = Selection.of(id)
         }
     }
 
-    /** True when the open folder can archive, meaning an Archive folder exists and this isn't it. */
-    val canArchive: StateFlow<Boolean> = combine(folders, _selectedFolderId) { list, selected ->
-        list.any { it.role == FolderRole.ARCHIVE } && list.firstOrNull { it.id == selected }?.role != FolderRole.ARCHIVE
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    private fun targets(): List<Long> = SelectionRules.ordered(_selection.value, order())
 
-    fun archiveSelected() = removeSelected(UserAction.ARCHIVE)
+    // Actions
 
-    fun deleteSelected() = removeSelected(UserAction.DELETE)
+    fun archiveSelected() = removeSelected(UserAction.ARCHIVE, null)
+
+    fun deleteSelected() = removeSelected(UserAction.DELETE, null)
+
+    fun moveSelected(targetFolderId: Long) = removeSelected(UserAction.MOVE, targetFolderId)
 
     fun toggleReadSelected() {
-        val message = selectedMessage.value ?: return
+        val ids = targets().toSet()
+        if (ids.isEmpty()) return
+        val anyUnread = messages.value.any { it.id in ids && !it.isSeen } || selectedMessage.value?.let { !it.isSeen } == true
         viewModelScope.launch {
-            repository.perform(message.id, if (message.isSeen) UserAction.MARK_UNREAD else UserAction.MARK_READ)
+            repository.performAll(ids.toList(), if (anyUnread) UserAction.MARK_READ else UserAction.MARK_UNREAD)
         }
     }
 
     fun toggleFlagSelected() {
-        val message = selectedMessage.value ?: return
+        val ids = targets().toSet()
+        if (ids.isEmpty()) return
+        val anyUnflagged = messages.value.any { it.id in ids && !it.isFlagged }
         viewModelScope.launch {
-            repository.perform(message.id, if (message.isFlagged) UserAction.UNFLAG else UserAction.FLAG)
+            repository.performAll(ids.toList(), if (anyUnflagged) UserAction.FLAG else UserAction.UNFLAG)
         }
     }
 
-    /** Archives or deletes the open message and moves on to the next one, like desktop mail apps. */
-    private fun removeSelected(action: UserAction) {
-        val id = _selectedMessageId.value ?: return
-        val list = messages.value
-        val index = list.indexOfFirst { it.id == id }
-        val next = list.getOrNull(index + 1) ?: list.getOrNull(index - 1)
+    /** Archives, deletes or moves the selection, then selects the message after it, like desktop mail apps. */
+    private fun removeSelected(action: UserAction, targetFolderId: Long?) {
+        val ids = targets()
+        if (ids.isEmpty()) return
+        val before = _selection.value
+        val next = SelectionRules.afterRemoval(order(), ids.toSet())
         viewModelScope.launch {
-            if (repository.perform(id, action)) {
-                if (_selectedMessageId.value == id) {
-                    _selectedMessageId.value = null
-                    next?.let { selectMessage(it.id) }
-                }
+            val result = repository.performAll(ids, action, targetFolderId)
+            if (result.applied == 0) return@launch
+            if (_selection.value == before) _selection.value = next
+            _notice.value = Notice(describe(action, result.applied, result.targetName), result.undo, before)
+        }
+    }
+
+    fun undo() {
+        val notice = _notice.value ?: return
+        val token = notice.undo ?: return
+        _notice.value = null
+        viewModelScope.launch {
+            if (repository.undo(token)) {
+                notice.restore?.let { _selection.value = it }
+            } else {
+                _notice.value = Notice("Too late to undo. The change was already sent to iCloud.")
             }
         }
     }
 
-    fun retryBody() {
-        _selectedMessageId.value?.let(::loadBody)
+    fun dismissNotice(notice: Notice) {
+        if (_notice.value === notice) _notice.value = null
     }
 
-    /** Moves the selection up or down the list, as the arrow keys do. */
-    fun moveSelection(delta: Int) {
-        val list = messages.value
-        if (list.isEmpty()) return
-        val index = list.indexOfFirst { it.id == _selectedMessageId.value }
-        val next = if (index < 0) 0 else (index + delta).coerceIn(0, list.lastIndex)
-        if (next != index) selectMessage(list[next].id)
+    // Folder pickers
+
+    fun openMovePicker() {
+        if (targets().isNotEmpty()) _picker.value = PickerMode.MOVE
+    }
+
+    fun openGoToPicker() {
+        _picker.value = PickerMode.GO_TO
+    }
+
+    fun closePicker() {
+        _picker.value = null
+    }
+
+    fun pickFolder(id: Long) {
+        val mode = _picker.value
+        _picker.value = null
+        when (mode) {
+            PickerMode.MOVE -> moveSelected(id)
+            PickerMode.GO_TO -> selectFolder(id)
+            null -> Unit
+        }
+    }
+
+    /** How many messages the move picker would move, for its title. */
+    fun selectionCount(): Int = targets().size
+
+    // Message body and images
+
+    fun retryBody() {
+        selectedMessageId.value?.let(::loadBody)
+    }
+
+    fun loadRemoteImages() {
+        val id = selectedMessageId.value ?: return
+        _remoteAllowedFor.value = _remoteAllowedFor.value + id
+    }
+
+    fun trustSender() {
+        val address = selectedMessage.value?.fromAddress ?: return
+        repository.trustImageSender(address)
     }
 
     fun signOut() {
@@ -168,12 +270,22 @@ class MailViewModel(private val repository: MailRepository) : ViewModel() {
     private fun loadBody(id: Long) {
         viewModelScope.launch {
             val outcome = repository.loadBody(id)
-            if (_selectedMessageId.value != id) return@launch
+            if (selectedMessageId.value != id) return@launch
             _bodyError.value = when (outcome) {
                 is SyncOutcome.Failed -> outcome.message
                 SyncOutcome.AuthFailed -> "iCloud rejected your password."
                 else -> null
             }
+        }
+    }
+
+    private fun describe(action: UserAction, count: Int, target: String?): String {
+        val what = if (count == 1) "Message" else "$count messages"
+        return when (action) {
+            UserAction.ARCHIVE -> "$what archived"
+            UserAction.DELETE -> "$what deleted"
+            UserAction.MOVE -> "$what moved to ${target ?: "folder"}"
+            else -> "$what updated"
         }
     }
 }

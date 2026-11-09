@@ -4,7 +4,7 @@ import com.kayloh20.kyliemail.data.db.ActionType
 import com.kayloh20.kyliemail.data.mail.FolderRole
 
 /** What the user asked for, before it is resolved against the folders that exist. */
-enum class UserAction { MARK_READ, MARK_UNREAD, FLAG, UNFLAG, ARCHIVE, DELETE }
+enum class UserAction { MARK_READ, MARK_UNREAD, FLAG, UNFLAG, ARCHIVE, DELETE, MOVE }
 
 /** How a [UserAction] is carried out: the server action, where the message goes, and whether it leaves the list. */
 data class ActionPlan(val type: ActionType, val targetRole: FolderRole? = null, val removesFromFolder: Boolean = false)
@@ -20,6 +20,8 @@ object ActionPlanner {
             sourceRole == FolderRole.ARCHIVE || FolderRole.ARCHIVE !in availableRoles -> null
             else -> ActionPlan(ActionType.MOVE, FolderRole.ARCHIVE, removesFromFolder = true)
         }
+        // The destination is chosen by the user and checked by the caller.
+        UserAction.MOVE -> ActionPlan(ActionType.MOVE, removesFromFolder = true)
         UserAction.DELETE -> when {
             // Deleting from Trash, or when there is no Trash, removes the message for good.
             sourceRole == FolderRole.TRASH || FolderRole.TRASH !in availableRoles ->

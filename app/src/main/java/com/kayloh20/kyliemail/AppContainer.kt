@@ -3,6 +3,7 @@ package com.kayloh20.kyliemail
 import android.content.Context
 import com.kayloh20.kyliemail.data.MailActions
 import com.kayloh20.kyliemail.data.MailRepository
+import com.kayloh20.kyliemail.data.MoveHistory
 import com.kayloh20.kyliemail.data.notify.MailNotifier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +29,9 @@ class AppContainer(context: Context) {
         inboxListener = notifier::onInboxSynced
     }
     val syncScheduler = SyncScheduler(context)
-    val actions = MailActions(database, syncEngine, appScope, onMessageHandled = notifier::cancel)
-    val repository = MailRepository(database, credentials, syncEngine, syncScheduler, inlineImages, imageTrust, actions, notifier)
+    val moveHistory = MoveHistory(context)
+    val actions = MailActions(database, syncEngine, appScope, moveHistory, onMessageHandled = notifier::cancel)
+    val repository = MailRepository(
+        database, credentials, syncEngine, syncScheduler, inlineImages, imageTrust, actions, notifier, moveHistory,
+    )
 }

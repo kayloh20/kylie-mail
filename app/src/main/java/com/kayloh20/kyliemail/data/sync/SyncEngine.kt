@@ -331,7 +331,7 @@ class SyncEngine(
 
     /** Replays queued actions. Actions that keep failing are dropped and the local copy is repaired. */
     private suspend fun processActions(store: IMAPStore) {
-        val actions = actionDao.all()
+        val actions = actionDao.ready(System.currentTimeMillis())
         if (actions.isEmpty()) return
         for ((folderName, group) in actions.groupBy { it.folderName }) {
             val remote = store.getFolder(folderName) as IMAPFolder

@@ -1,5 +1,6 @@
 package com.kayloh20.kyliemail.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -99,4 +100,6 @@ data class PendingAction(
     val targetFolderName: String? = null,
     val attempts: Int = 0,
     val createdAt: Long,
+    /** Held back until this time so it can still be undone. */
+    @ColumnInfo(defaultValue = "0") val notBefore: Long = 0,
 )

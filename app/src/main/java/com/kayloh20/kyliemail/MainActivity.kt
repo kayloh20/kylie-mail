@@ -2,6 +2,10 @@ package com.kayloh20.kyliemail
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.KeyEvent
+import android.view.KeyboardShortcutGroup
+import android.view.KeyboardShortcutInfo
+import android.view.Menu
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -80,6 +84,29 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         val container = (application as KylieMailApp).container
         if (container.credentials.account.value != null) MailPushService.start(this)
+    }
+
+    /** Lists the app's shortcuts in the system keyboard shortcuts helper. */
+    override fun onProvideKeyboardShortcuts(data: MutableList<KeyboardShortcutGroup>, menu: Menu?, deviceId: Int) {
+        val ctrl = KeyEvent.META_CTRL_ON
+        val shift = KeyEvent.META_SHIFT_ON
+        data.add(
+            KeyboardShortcutGroup(
+                "Kylie Mail",
+                listOf(
+                    KeyboardShortcutInfo("Move to folder", KeyEvent.KEYCODE_M, ctrl or shift),
+                    KeyboardShortcutInfo("Go to folder", KeyEvent.KEYCODE_K, ctrl),
+                    KeyboardShortcutInfo("Undo", KeyEvent.KEYCODE_Z, ctrl),
+                    KeyboardShortcutInfo("Select all", KeyEvent.KEYCODE_A, ctrl),
+                    KeyboardShortcutInfo("Delete", KeyEvent.KEYCODE_FORWARD_DEL, 0),
+                    KeyboardShortcutInfo("Next message", KeyEvent.KEYCODE_DPAD_DOWN, 0),
+                    KeyboardShortcutInfo("Previous message", KeyEvent.KEYCODE_DPAD_UP, 0),
+                    KeyboardShortcutInfo("Extend selection", KeyEvent.KEYCODE_DPAD_DOWN, shift),
+                    KeyboardShortcutInfo("Clear selection", KeyEvent.KEYCODE_ESCAPE, 0),
+                ),
+            ),
+        )
+        super.onProvideKeyboardShortcuts(data, menu, deviceId)
     }
 
     private fun handleIntent(intent: Intent?) {

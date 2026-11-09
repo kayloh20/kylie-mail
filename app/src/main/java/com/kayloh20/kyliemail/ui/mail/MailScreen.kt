@@ -36,6 +36,16 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.Alignment
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import com.kayloh20.kyliemail.data.MailActions
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
@@ -59,6 +69,24 @@ fun MailScreen(
     val bodyError by viewModel.bodyError.collectAsStateWithLifecycle()
     val remoteImagesAllowed by viewModel.remoteImagesAllowed.collectAsStateWithLifecycle()
     val canArchive by viewModel.canArchive.collectAsStateWithLifecycle()
+    val selection by viewModel.selection.collectAsStateWithLifecycle()
+    val picker by viewModel.picker.collectAsStateWithLifecycle()
+    val notice by viewModel.notice.collectAsStateWithLifecycle()
+    val recentMoveTargets by viewModel.recentMoveTargets.collectAsStateWithLifecycle()
+    val snackbarHost = remember { SnackbarHostState() }
+
+    // Show each notice; ones with Undo stay up for the undo window.
+    LaunchedEffect(notice) {
+        val current = notice ?: return@LaunchedEffect
+        val result = withTimeoutOrNull(if (current.undo != null) MailActions.UNDO_WINDOW_MS else 4_000L) {
+            snackbarHost.showSnackbar(
+                message = current.text,
+                actionLabel = if (current.undo != null) "Undo" else null,
+                duration = SnackbarDuration.Indefinite,
+            )
+        }
+        if (result == SnackbarResult.ActionPerformed) viewModel.undo() else viewModel.dismissNotice(current)
+    }
 
     LaunchedEffect(openRequest) {
         if (openRequest != null) {
@@ -92,12 +120,21 @@ fun MailScreen(
         .focusable()
         .onPreviewKeyEvent { event ->
             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-            when (event.key) {
-                Key.DirectionDown -> { viewModel.moveSelection(1); true }
-                Key.DirectionUp -> { viewModel.moveSelection(-1); true }
-                Key.Escape -> if (selectedMessageId != null) { viewModel.selectMessage(null); true } else false
+            val ctrl = event.isCtrlPressed || event.isMetaPressed
+            val shift = event.isShiftPressed
+            val hasSelection = selection.ids.isNotEmpty()
+            when {
+                ctrl && shift && event.key == Key.M -> { viewModel.openMovePicker(); true }
+                ctrl && event.key == Key.K -> { viewModel.openGoToPicker(); true }
+                ctrl && event.key == Key.Z -> { viewModel.undo(); true }
+                ctrl && event.key == Key.A -> { viewModel.selectAll(); true }
+                ctrl -> false
+                event.key == Key.DirectionDown -> { viewModel.moveSelection(1, extend = shift); true }
+                event.key == Key.DirectionUp -> { viewModel.moveSelection(-1, extend = shift); true }
+                event.key == Key.Escape -> if (hasSelection) { viewModel.clearSelection(); true } else false
                 // Delete, or Backspace on keyboards without a Delete key.
-                Key.Delete, Key.Backspace -> if (selectedMessageId != null) { viewModel.deleteSelected(); true } else false
+                event.key == Key.Delete || event.key == Key.Backspace ->
+                    if (hasSelection) { viewModel.deleteSelected(); true } else false
                 else -> false
             }
         }
@@ -117,10 +154,27 @@ fun MailScreen(
     fun listPane(showMenu: Boolean, paneModifier: Modifier) = MessageListPane(
         title = folderTitle,
         messages = messages,
-        selectedMessageId = selectedMessageId,
+        selectedIds = selection.ids,
+        cursorId = selection.cursor,
         syncState = syncState,
         listState = listState,
-        onSelect = viewModel::selectMessage,
+        onClick = { id, ctrl, shift ->
+            viewModel.click(id, ctrl, shift)
+            runCatching { focusRequester.requestFocus() }
+        },
+        onContextMenu = viewModel::prepareContextMenu,
+        contextMenu = { message, close ->
+            MessageContextMenu(
+                message = message,
+                multiple = selection.ids.size > 1,
+                canArchive = canArchive,
+                onToggleRead = { close(); viewModel.toggleReadSelected() },
+                onToggleFlag = { close(); viewModel.toggleFlagSelected() },
+                onArchive = { close(); viewModel.archiveSelected() },
+                onMove = { close(); viewModel.openMovePicker() },
+                onDelete = { close(); viewModel.deleteSelected() },
+            )
+        },
         onRefresh = viewModel::refresh,
         onSignOut = viewModel::signOut,
         onOpenFolders = if (showMenu) ({ scope.launch { drawerState.open() } }) else null,
@@ -130,6 +184,7 @@ fun MailScreen(
     @Composable
     fun detailPane(showBack: Boolean, paneModifier: Modifier) = MessageDetailPane(
         message = selectedMessage,
+        selectionCount = selection.ids.size,
         bodyError = bodyError,
         remoteImagesAllowed = remoteImagesAllowed,
         inlineImages = viewModel.inlineImages,
@@ -141,7 +196,9 @@ fun MailScreen(
         onDelete = viewModel::deleteSelected,
         onToggleRead = viewModel::toggleReadSelected,
         onToggleFlag = viewModel::toggleFlagSelected,
-        onBack = if (showBack) ({ viewModel.selectMessage(null) }) else null,
+        onMove = viewModel::openMovePicker,
+        onClearSelection = viewModel::clearSelection,
+        onBack = if (showBack) ({ viewModel.clearSelection() }) else null,
         modifier = paneModifier,
     )
 
@@ -170,8 +227,8 @@ fun MailScreen(
                         detailPane(showBack = false, paneModifier = Modifier.weight(1f).fillMaxHeight())
                     }
                 } else {
-                    val showingMessage = selectedMessageId != null
-                    BackHandler(enabled = showingMessage) { viewModel.selectMessage(null) }
+                    val showingMessage = selectedMessageId != null || selection.ids.size > 1
+                    BackHandler(enabled = showingMessage) { viewModel.clearSelection() }
                     if (showingMessage) {
                         detailPane(showBack = true, paneModifier = Modifier.fillMaxSize())
                     } else {
@@ -180,5 +237,30 @@ fun MailScreen(
                 }
             }
         }
+
+        SnackbarHost(snackbarHost, Modifier.align(Alignment.BottomCenter))
+    }
+
+    when (picker) {
+        PickerMode.MOVE -> {
+            val count = viewModel.selectionCount()
+            FolderPickerDialog(
+                title = if (count == 1) "Move message to…" else "Move $count messages to…",
+                folders = folders,
+                recentFullNames = recentMoveTargets,
+                excludeId = selectedFolderId,
+                onPick = viewModel::pickFolder,
+                onDismiss = viewModel::closePicker,
+            )
+        }
+        PickerMode.GO_TO -> FolderPickerDialog(
+            title = "Go to folder",
+            folders = folders,
+            recentFullNames = emptyList(),
+            excludeId = null,
+            onPick = viewModel::pickFolder,
+            onDismiss = viewModel::closePicker,
+        )
+        null -> Unit
     }
 }

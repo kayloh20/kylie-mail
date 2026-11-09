@@ -10,9 +10,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [FolderEntity::class, MessageEntity::class, PendingAction::class],
-    version = 3,
+    version = 4,
     exportSchema = true,
-    autoMigrations = [AutoMigration(from = 2, to = 3)],
+    autoMigrations = [AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4)],
 )
 abstract class MailDatabase : RoomDatabase() {
     abstract fun folders(): FolderDao

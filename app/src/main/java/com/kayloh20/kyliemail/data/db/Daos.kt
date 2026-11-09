@@ -72,6 +72,9 @@ interface MessageDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(messages: List<MessageEntity>)
 
+    @Query("SELECT * FROM messages WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<Long>): List<MessageEntity>
+
     @Query("UPDATE messages SET isSeen = :seen, isFlagged = :flagged, isAnswered = :answered WHERE folderId = :folderId AND uid = :uid")
     suspend fun updateFlags(folderId: Long, uid: Long, seen: Boolean, flagged: Boolean, answered: Boolean)
 
@@ -107,8 +110,11 @@ interface ActionDao {
     @Insert
     suspend fun insert(action: PendingAction): Long
 
-    @Query("SELECT * FROM pending_actions ORDER BY id")
-    suspend fun all(): List<PendingAction>
+    @Query("SELECT * FROM pending_actions WHERE notBefore <= :now ORDER BY id")
+    suspend fun ready(now: Long): List<PendingAction>
+
+    @Query("DELETE FROM pending_actions WHERE id IN (:ids)")
+    suspend fun deleteAll(ids: List<Long>): Int
 
     @Query("SELECT uid FROM pending_actions WHERE folderName = :folderName")
     suspend fun pendingUids(folderName: String): List<Long>

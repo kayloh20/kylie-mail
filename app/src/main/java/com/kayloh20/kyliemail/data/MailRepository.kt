@@ -27,8 +27,17 @@ class MailRepository(
     private val imageTrust: ImageTrust,
     private val actions: MailActions,
     private val notifier: MailNotifier,
+    private val moveHistory: MoveHistory,
 ) {
     suspend fun perform(messageId: Long, action: UserAction): Boolean = actions.perform(messageId, action)
+
+    suspend fun performAll(messageIds: List<Long>, action: UserAction, targetFolderId: Long? = null): ActionResult =
+        actions.perform(messageIds, action, targetFolderId)
+
+    suspend fun undo(token: UndoToken): Boolean = actions.undo(token)
+
+    /** Folders recently moved to, newest first, by full name. */
+    val recentMoveTargets: StateFlow<List<String>> = moveHistory.recent
 
     suspend fun messageById(id: Long): MessageEntity? = db.messages().getById(id)
 
@@ -63,6 +72,7 @@ class MailRepository(
             inlineImages.clear()
             imageTrust.clear()
             notifier.clearAll()
+            moveHistory.clear()
         }
         syncEngine.disconnect()
     }

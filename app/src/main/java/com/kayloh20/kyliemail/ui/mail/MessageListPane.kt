@@ -1,7 +1,19 @@
 package com.kayloh20.kyliemail.ui.mail
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.input.pointer.isMetaPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.isShiftPressed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,10 +74,13 @@ import com.kayloh20.kyliemail.data.sync.SyncState
 fun MessageListPane(
     title: String,
     messages: List<MessageSummary>,
-    selectedMessageId: Long?,
+    selectedIds: Set<Long>,
+    cursorId: Long?,
     syncState: SyncState,
     listState: LazyListState,
-    onSelect: (Long) -> Unit,
+    onClick: (id: Long, ctrl: Boolean, shift: Boolean) -> Unit,
+    onContextMenu: (Long) -> Unit,
+    contextMenu: @Composable (message: MessageSummary, close: () -> Unit) -> Unit,
     onRefresh: () -> Unit,
     onSignOut: () -> Unit,
     onOpenFolders: (() -> Unit)?,
@@ -73,9 +88,9 @@ fun MessageListPane(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
 
-    // Keep the selected message on screen when it is changed with the keyboard.
-    LaunchedEffect(selectedMessageId) {
-        val index = messages.indexOfFirst { it.id == selectedMessageId }
+    // Keep the keyboard cursor on screen.
+    LaunchedEffect(cursorId) {
+        val index = messages.indexOfFirst { it.id == cursorId }
         if (index < 0) return@LaunchedEffect
         val visible = listState.layoutInfo.visibleItemsInfo
         val fullyVisible = visible.size > 2 && index > visible.first().index && index < visible.last().index
@@ -120,7 +135,13 @@ fun MessageListPane(
         } else {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 items(messages, key = { it.id }) { message ->
-                    MessageRow(message, selected = message.id == selectedMessageId, onClick = { onSelect(message.id) })
+                    MessageRow(
+                        message = message,
+                        selected = message.id in selectedIds,
+                        onClick = { ctrl, shift -> onClick(message.id, ctrl, shift) },
+                        onContextMenu = { onContextMenu(message.id) },
+                        contextMenu = contextMenu,
+                    )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 }
             }
@@ -152,15 +173,58 @@ private fun SyncBanner(outcome: SyncOutcome?, onRetry: () -> Unit, onSignOut: ()
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageRow(message: MessageSummary, selected: Boolean, onClick: () -> Unit) {
+private fun MessageRow(
+    message: MessageSummary,
+    selected: Boolean,
+    onClick: (ctrl: Boolean, shift: Boolean) -> Unit,
+    onContextMenu: () -> Unit,
+    contextMenu: @Composable (message: MessageSummary, close: () -> Unit) -> Unit,
+) {
     val unread = !message.isSeen
     val background = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
+    val density = LocalDensity.current
+    // Modifier keys held at the moment of the press, read when the click completes.
+    val pressModifiers = remember { arrayOf(false, false) }
+    var menuOffset by remember { mutableStateOf<DpOffset?>(null) }
+    var rowHeight by remember { mutableIntStateOf(0) }
+
+    Box {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .onSizeChanged { rowHeight = it.height }
             .background(background)
-            .clickable(onClick = onClick)
+            .pointerInput(message.id) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.type != PointerEventType.Press) continue
+                        val keys = event.keyboardModifiers
+                        pressModifiers[0] = keys.isCtrlPressed || keys.isMetaPressed
+                        pressModifiers[1] = keys.isShiftPressed
+                        if (event.buttons.isSecondaryPressed) {
+                            // Right-click: open the menu where the pointer is, and keep it from counting as a click.
+                            event.changes.forEach { it.consume() }
+                            val position = event.changes.first().position
+                            onContextMenu()
+                            menuOffset = with(density) { DpOffset(position.x.toDp(), (position.y - rowHeight).toDp()) }
+                        }
+                    }
+                }
+            }
+            .combinedClickable(
+                onClick = {
+                    onClick(pressModifiers[0], pressModifiers[1])
+                    pressModifiers[0] = false
+                    pressModifiers[1] = false
+                },
+                onLongClick = {
+                    onContextMenu()
+                    menuOffset = DpOffset(24.dp, 0.dp)
+                },
+            )
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.Top,
     ) {
@@ -209,6 +273,14 @@ private fun MessageRow(message: MessageSummary, selected: Boolean, onClick: () -
                 )
             }
         }
+    }
+    DropdownMenu(
+        expanded = menuOffset != null,
+        onDismissRequest = { menuOffset = null },
+        offset = menuOffset ?: DpOffset.Zero,
+    ) {
+        contextMenu(message) { menuOffset = null }
+    }
     }
 }
 
