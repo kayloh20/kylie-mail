@@ -82,3 +82,21 @@ data class LocalFlags(
     val isFlagged: Boolean,
     val isAnswered: Boolean,
 )
+
+enum class ActionType { MARK_READ, MARK_UNREAD, FLAG, UNFLAG, MOVE, DELETE_PERMANENTLY }
+
+/**
+ * A change made on the device that still has to reach the server. The local database already
+ * shows the change; this row is replayed against iCloud until it succeeds.
+ */
+@Entity(tableName = "pending_actions")
+data class PendingAction(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val type: ActionType,
+    val folderName: String,
+    val uidValidity: Long,
+    val uid: Long,
+    val targetFolderName: String? = null,
+    val attempts: Int = 0,
+    val createdAt: Long,
+)

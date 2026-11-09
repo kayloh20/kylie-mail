@@ -7,8 +7,8 @@ import javax.mail.Session
 
 class ImapConnector(private val server: ServerConfig = ServerConfig.ICLOUD) {
 
-    fun connect(username: String, password: String): IMAPStore {
-        val session = Session.getInstance(properties())
+    fun connect(username: String, password: String, readTimeoutMs: Long = 60_000): IMAPStore {
+        val session = Session.getInstance(properties(readTimeoutMs))
         val store = session.getStore("imaps") as IMAPStore
         store.connect(server.imapHost, server.imapPort, username, password)
         return store
@@ -31,14 +31,14 @@ class ImapConnector(private val server: ServerConfig = ServerConfig.ICLOUD) {
         throw lastError ?: AuthenticationFailedException()
     }
 
-    private fun properties() = Properties().apply {
+    private fun properties(readTimeoutMs: Long) = Properties().apply {
         put("mail.store.protocol", "imaps")
         put("mail.imaps.host", server.imapHost)
         put("mail.imaps.port", server.imapPort.toString())
         put("mail.imaps.ssl.enable", "true")
         put("mail.imaps.ssl.checkserveridentity", "true")
         put("mail.imaps.connectiontimeout", "20000")
-        put("mail.imaps.timeout", "60000")
+        put("mail.imaps.timeout", readTimeoutMs.toString())
         put("mail.imaps.writetimeout", "20000")
         // Keep a couple of logged-in connections around so opening folders doesn't log in again each time.
         put("mail.imaps.connectionpoolsize", "2")

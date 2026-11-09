@@ -7,9 +7,11 @@ import com.kayloh20.kyliemail.data.db.MailDatabase
 import com.kayloh20.kyliemail.data.db.MessageEntity
 import com.kayloh20.kyliemail.data.db.MessageSummary
 import com.kayloh20.kyliemail.data.mail.InlineImageStore
+import com.kayloh20.kyliemail.data.notify.MailNotifier
 import com.kayloh20.kyliemail.data.sync.SyncEngine
 import com.kayloh20.kyliemail.data.sync.SyncOutcome
 import com.kayloh20.kyliemail.data.sync.SyncScheduler
+import com.kayloh20.kyliemail.data.sync.UserAction
 import com.kayloh20.kyliemail.data.sync.SyncState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -23,7 +25,13 @@ class MailRepository(
     private val scheduler: SyncScheduler,
     val inlineImages: InlineImageStore,
     private val imageTrust: ImageTrust,
+    private val actions: MailActions,
+    private val notifier: MailNotifier,
 ) {
+    suspend fun perform(messageId: Long, action: UserAction): Boolean = actions.perform(messageId, action)
+
+    suspend fun messageById(id: Long): MessageEntity? = db.messages().getById(id)
+
     /** Senders whose remote images load automatically. */
     val trustedImageSenders: StateFlow<Set<String>> = imageTrust.senders
 
@@ -54,6 +62,7 @@ class MailRepository(
             credentials.clear()
             inlineImages.clear()
             imageTrust.clear()
+            notifier.clearAll()
         }
         syncEngine.disconnect()
     }

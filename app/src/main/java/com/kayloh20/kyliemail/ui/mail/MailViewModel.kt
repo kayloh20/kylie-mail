@@ -9,6 +9,7 @@ import com.kayloh20.kyliemail.data.db.MessageSummary
 import com.kayloh20.kyliemail.data.mail.FolderRole
 import com.kayloh20.kyliemail.data.sync.SyncOutcome
 import com.kayloh20.kyliemail.data.sync.SyncState
+import com.kayloh20.kyliemail.data.sync.UserAction
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -90,7 +91,61 @@ class MailViewModel(private val repository: MailRepository) : ViewModel() {
     fun selectMessage(id: Long?) {
         _selectedMessageId.value = id
         _bodyError.value = null
-        if (id != null) loadBody(id)
+        if (id != null) {
+            loadBody(id)
+            viewModelScope.launch {
+                val message = repository.messageById(id)
+                if (message != null && !message.isSeen) repository.perform(id, UserAction.MARK_READ)
+            }
+        }
+    }
+
+    /** Opens a message from anywhere, such as a notification, switching to its folder. */
+    fun openMessage(id: Long) {
+        viewModelScope.launch {
+            val message = repository.messageById(id) ?: return@launch
+            _selectedFolderId.value = message.folderId
+            selectMessage(id)
+        }
+    }
+
+    /** True when the open folder can archive, meaning an Archive folder exists and this isn't it. */
+    val canArchive: StateFlow<Boolean> = combine(folders, _selectedFolderId) { list, selected ->
+        list.any { it.role == FolderRole.ARCHIVE } && list.firstOrNull { it.id == selected }?.role != FolderRole.ARCHIVE
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun archiveSelected() = removeSelected(UserAction.ARCHIVE)
+
+    fun deleteSelected() = removeSelected(UserAction.DELETE)
+
+    fun toggleReadSelected() {
+        val message = selectedMessage.value ?: return
+        viewModelScope.launch {
+            repository.perform(message.id, if (message.isSeen) UserAction.MARK_UNREAD else UserAction.MARK_READ)
+        }
+    }
+
+    fun toggleFlagSelected() {
+        val message = selectedMessage.value ?: return
+        viewModelScope.launch {
+            repository.perform(message.id, if (message.isFlagged) UserAction.UNFLAG else UserAction.FLAG)
+        }
+    }
+
+    /** Archives or deletes the open message and moves on to the next one, like desktop mail apps. */
+    private fun removeSelected(action: UserAction) {
+        val id = _selectedMessageId.value ?: return
+        val list = messages.value
+        val index = list.indexOfFirst { it.id == id }
+        val next = list.getOrNull(index + 1) ?: list.getOrNull(index - 1)
+        viewModelScope.launch {
+            if (repository.perform(id, action)) {
+                if (_selectedMessageId.value == id) {
+                    _selectedMessageId.value = null
+                    next?.let { selectMessage(it.id) }
+                }
+            }
+        }
     }
 
     fun retryBody() {

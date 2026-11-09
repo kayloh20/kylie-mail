@@ -6,6 +6,8 @@ import com.kayloh20.kyliemail.data.account.CredentialStore
 import com.kayloh20.kyliemail.data.db.FolderEntity
 import com.kayloh20.kyliemail.data.db.MailDatabase
 import com.kayloh20.kyliemail.data.db.MessageEntity
+import com.kayloh20.kyliemail.data.db.ActionType
+import com.kayloh20.kyliemail.data.db.PendingAction
 import com.kayloh20.kyliemail.data.mail.FolderRole
 import com.kayloh20.kyliemail.data.mail.ImapConnector
 import com.kayloh20.kyliemail.data.mail.InlineImageStore
@@ -24,6 +26,8 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import javax.mail.AuthenticationFailedException
 import javax.mail.FetchProfile
+import javax.mail.FolderClosedException
+import javax.mail.StoreClosedException
 import javax.mail.Flags
 import javax.mail.Folder
 import javax.mail.Message
@@ -52,6 +56,10 @@ class SyncEngine(
 ) {
     private val folderDao = db.folders()
     private val messageDao = db.messages()
+    private val actionDao = db.actions()
+
+    /** Called after the inbox has been synced, so notifications can be updated. */
+    var inboxListener: (suspend (FolderEntity) -> Unit)? = null
     /** Only one header sync runs at a time. */
     private val mutex = Mutex()
 
@@ -82,6 +90,12 @@ class SyncEngine(
     /** Quick refresh of a single folder, used when it is opened. */
     suspend fun syncFolder(folderId: Long): SyncOutcome = syncHeaders {
         listOfNotNull(folderDao.getById(folderId))
+    }
+
+    /** Sends queued changes (read, flag, move, delete) to the server now. */
+    suspend fun flushActions(): SyncOutcome = mutex.withLock {
+        if (credentials.account.value == null) return SyncOutcome.NotSignedIn
+        withContext(Dispatchers.IO) { runCatchingMail { withConnection { store -> processActions(store) } } }
     }
 
     /** Runs [block] while no sync is in progress, for changes that must not interleave with one. */
@@ -121,6 +135,8 @@ class SyncEngine(
             val result = withContext(Dispatchers.IO) {
                 runCatchingMail {
                     withConnection { store ->
+                        // Local changes go first, so the sync doesn't undo them.
+                        processActions(store)
                         val targets = pickFolders(store)
                         for (folder in targets) syncMessages(store, folder)
                         synced = targets
@@ -135,6 +151,11 @@ class SyncEngine(
                 )
             }
             result
+        }
+        if (outcome == SyncOutcome.Success) {
+            synced.firstOrNull { it.role == FolderRole.INBOX }?.let { inbox ->
+                folderDao.getById(inbox.id)?.let { runCatching { inboxListener?.invoke(it) } }
+            }
         }
         if (outcome == SyncOutcome.Success && synced.isNotEmpty()) {
             withContext(Dispatchers.IO) {
@@ -286,7 +307,9 @@ class SyncEngine(
             }.toMap()
 
             val vanished = SyncPlanner.vanished(localFlags.map { it.uid }, serverFlags.keys)
-            val changed = SyncPlanner.changedFlags(localFlags, serverFlags)
+            // Messages with changes still queued keep their local flags until the queue catches up.
+            val pending = actionDao.pendingUids(local.fullName).toSet()
+            val changed = SyncPlanner.changedFlags(localFlags.filter { it.uid !in pending }, serverFlags)
             db.withTransaction {
                 vanished.chunked(500).forEach { messageDao.deleteUids(local.id, it) }
                 for ((uid, flags) in changed) {
@@ -295,7 +318,82 @@ class SyncEngine(
             }
         }
 
-        folderDao.update(local.copy(highestUid = highest, lastSyncedAt = System.currentTimeMillis()))
+        val unread = runCatching { remote.unreadMessageCount }.getOrDefault(local.unreadCount)
+        folderDao.update(
+            local.copy(
+                highestUid = highest,
+                lastSyncedAt = System.currentTimeMillis(),
+                unreadCount = maxOf(unread, 0),
+                totalCount = count,
+            ),
+        )
+    }
+
+    /** Replays queued actions. Actions that keep failing are dropped and the local copy is repaired. */
+    private suspend fun processActions(store: IMAPStore) {
+        val actions = actionDao.all()
+        if (actions.isEmpty()) return
+        for ((folderName, group) in actions.groupBy { it.folderName }) {
+            val remote = store.getFolder(folderName) as IMAPFolder
+            if (!remote.exists()) {
+                group.forEach { giveUp(it) }
+                continue
+            }
+            remote.open(Folder.READ_WRITE)
+            try {
+                for (action in group) {
+                    try {
+                        val message = if (action.uidValidity == remote.uidValidity) remote.getMessageByUID(action.uid) else null
+                        // Already gone, or the folder was rebuilt: nothing left to do.
+                        if (message != null && !message.isExpunged) apply(store, remote, message, action)
+                        actionDao.delete(action.id)
+                    } catch (e: FolderClosedException) {
+                        throw e
+                    } catch (e: StoreClosedException) {
+                        throw e
+                    } catch (e: MessagingException) {
+                        if (action.attempts + 1 >= MAX_ATTEMPTS) giveUp(action) else actionDao.countAttempt(action.id)
+                    }
+                }
+            } finally {
+                runCatching { remote.close(false) }
+            }
+        }
+    }
+
+    private fun apply(store: IMAPStore, folder: IMAPFolder, message: Message, action: PendingAction) {
+        when (action.type) {
+            ActionType.MARK_READ -> message.setFlag(Flags.Flag.SEEN, true)
+            ActionType.MARK_UNREAD -> message.setFlag(Flags.Flag.SEEN, false)
+            ActionType.FLAG -> message.setFlag(Flags.Flag.FLAGGED, true)
+            ActionType.UNFLAG -> message.setFlag(Flags.Flag.FLAGGED, false)
+            ActionType.MOVE -> {
+                val target = store.getFolder(action.targetFolderName ?: throw MessagingException("No target folder"))
+                if (!target.exists()) throw MessagingException("Folder ${action.targetFolderName} no longer exists")
+                if (store.hasCapability("MOVE")) {
+                    folder.moveMessages(arrayOf(message), target)
+                } else {
+                    folder.copyMessages(arrayOf(message), target)
+                    removeForGood(store, folder, message)
+                }
+            }
+            ActionType.DELETE_PERMANENTLY -> removeForGood(store, folder, message)
+        }
+    }
+
+    private fun removeForGood(store: IMAPStore, folder: IMAPFolder, message: Message) {
+        message.setFlag(Flags.Flag.DELETED, true)
+        // UID EXPUNGE removes just this message; plain EXPUNGE would also purge others marked deleted.
+        if (store.hasCapability("UIDPLUS")) folder.expunge(arrayOf(message)) else folder.expunge()
+    }
+
+    private suspend fun giveUp(action: PendingAction) {
+        actionDao.delete(action.id)
+        if (action.type == ActionType.MOVE || action.type == ActionType.DELETE_PERMANENTLY) {
+            // The message was removed locally but is still on the server: make the next sync fetch it again.
+            folderDao.lowerHighestUid(action.folderName, action.uid - 1)
+        }
+        // Flag changes need no repair; the next sync takes the server's flags.
     }
 
     private suspend fun prefetchBodies(store: IMAPStore, folder: FolderEntity) {
@@ -354,6 +452,7 @@ class SyncEngine(
     private companion object {
         const val INITIAL_WINDOW = 200
         const val PREFETCH_BODIES = 25
+        const val MAX_ATTEMPTS = 5
     }
 }
 

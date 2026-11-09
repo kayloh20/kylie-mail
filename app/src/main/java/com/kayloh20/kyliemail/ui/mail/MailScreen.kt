@@ -1,6 +1,13 @@
 package com.kayloh20.kyliemail.ui.mail
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -37,7 +44,12 @@ private val ExpandedWidth = 840.dp
 private val MediumWidth = 600.dp
 
 @Composable
-fun MailScreen(viewModel: MailViewModel, modifier: Modifier = Modifier) {
+fun MailScreen(
+    viewModel: MailViewModel,
+    openRequest: Long?,
+    onOpenRequestHandled: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val folders by viewModel.folders.collectAsStateWithLifecycle()
     val selectedFolderId by viewModel.selectedFolderId.collectAsStateWithLifecycle()
     val messages by viewModel.messages.collectAsStateWithLifecycle()
@@ -46,6 +58,25 @@ fun MailScreen(viewModel: MailViewModel, modifier: Modifier = Modifier) {
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
     val bodyError by viewModel.bodyError.collectAsStateWithLifecycle()
     val remoteImagesAllowed by viewModel.remoteImagesAllowed.collectAsStateWithLifecycle()
+    val canArchive by viewModel.canArchive.collectAsStateWithLifecycle()
+
+    LaunchedEffect(openRequest) {
+        if (openRequest != null) {
+            viewModel.openMessage(openRequest)
+            onOpenRequestHandled()
+        }
+    }
+
+    // Android 13+ asks before an app may show notifications.
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     val folderTitle = folders.firstOrNull { it.id == selectedFolderId }?.displayName ?: "Mail"
     var listWidth by rememberSaveable { mutableFloatStateOf(380f) }
@@ -65,6 +96,8 @@ fun MailScreen(viewModel: MailViewModel, modifier: Modifier = Modifier) {
                 Key.DirectionDown -> { viewModel.moveSelection(1); true }
                 Key.DirectionUp -> { viewModel.moveSelection(-1); true }
                 Key.Escape -> if (selectedMessageId != null) { viewModel.selectMessage(null); true } else false
+                // Delete, or Backspace on keyboards without a Delete key.
+                Key.Delete, Key.Backspace -> if (selectedMessageId != null) { viewModel.deleteSelected(); true } else false
                 else -> false
             }
         }
@@ -103,6 +136,11 @@ fun MailScreen(viewModel: MailViewModel, modifier: Modifier = Modifier) {
         onRetryBody = viewModel::retryBody,
         onLoadRemoteImages = viewModel::loadRemoteImages,
         onTrustSender = viewModel::trustSender,
+        canArchive = canArchive,
+        onArchive = viewModel::archiveSelected,
+        onDelete = viewModel::deleteSelected,
+        onToggleRead = viewModel::toggleReadSelected,
+        onToggleFlag = viewModel::toggleFlagSelected,
         onBack = if (showBack) ({ viewModel.selectMessage(null) }) else null,
         modifier = paneModifier,
     )

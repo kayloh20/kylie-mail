@@ -1,7 +1,12 @@
 package com.kayloh20.kyliemail
 
 import android.content.Context
+import com.kayloh20.kyliemail.data.MailActions
 import com.kayloh20.kyliemail.data.MailRepository
+import com.kayloh20.kyliemail.data.notify.MailNotifier
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import com.kayloh20.kyliemail.data.account.CredentialStore
 import com.kayloh20.kyliemail.data.db.MailDatabase
 import com.kayloh20.kyliemail.data.ImageTrust
@@ -17,7 +22,12 @@ class AppContainer(context: Context) {
     val connector = ImapConnector()
     val inlineImages = InlineImageStore(context.filesDir)
     val imageTrust = ImageTrust(context)
-    val syncEngine = SyncEngine(database, credentials, connector, inlineImages)
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val notifier = MailNotifier(context, database)
+    val syncEngine = SyncEngine(database, credentials, connector, inlineImages).apply {
+        inboxListener = notifier::onInboxSynced
+    }
     val syncScheduler = SyncScheduler(context)
-    val repository = MailRepository(database, credentials, syncEngine, syncScheduler, inlineImages, imageTrust)
+    val actions = MailActions(database, syncEngine, appScope, onMessageHandled = notifier::cancel)
+    val repository = MailRepository(database, credentials, syncEngine, syncScheduler, inlineImages, imageTrust, actions, notifier)
 }

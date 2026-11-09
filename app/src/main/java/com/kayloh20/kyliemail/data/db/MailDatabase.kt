@@ -1,6 +1,7 @@
 package com.kayloh20.kyliemail.data.db
 
 import android.content.Context
+import androidx.room.AutoMigration
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -8,13 +9,15 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [FolderEntity::class, MessageEntity::class],
-    version = 2,
+    entities = [FolderEntity::class, MessageEntity::class, PendingAction::class],
+    version = 3,
     exportSchema = true,
+    autoMigrations = [AutoMigration(from = 2, to = 3)],
 )
 abstract class MailDatabase : RoomDatabase() {
     abstract fun folders(): FolderDao
     abstract fun messages(): MessageDao
+    abstract fun actions(): ActionDao
 
     companion object {
         fun create(context: Context): MailDatabase =

@@ -28,6 +28,18 @@ interface FolderDao {
     @Update
     suspend fun update(folder: FolderEntity)
 
+    @Query("UPDATE folders SET unreadCount = :unread, totalCount = :total WHERE id = :id")
+    suspend fun setCounts(id: Long, unread: Int, total: Int)
+
+    @Query("UPDATE folders SET unreadCount = MAX(0, unreadCount + :delta) WHERE id = :id")
+    suspend fun adjustUnread(id: Long, delta: Int)
+
+    @Query("UPDATE folders SET highestUid = :uid WHERE fullName = :fullName AND highestUid > :uid")
+    suspend fun lowerHighestUid(fullName: String, uid: Long)
+
+    @Query("SELECT * FROM folders WHERE fullName = :fullName")
+    suspend fun getByName(fullName: String): FolderEntity?
+
     @Query("DELETE FROM folders WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<Long>)
 }
@@ -71,4 +83,39 @@ interface MessageDao {
 
     @Query("DELETE FROM messages WHERE folderId = :folderId")
     suspend fun deleteAllInFolder(folderId: Long)
+
+    @Query("DELETE FROM messages WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("UPDATE messages SET isSeen = :seen WHERE id = :id")
+    suspend fun setSeen(id: Long, seen: Boolean)
+
+    @Query("UPDATE messages SET isFlagged = :flagged WHERE id = :id")
+    suspend fun setFlagged(id: Long, flagged: Boolean)
+
+    @Query("SELECT * FROM messages WHERE folderId = :folderId AND isSeen = 0 AND uid > :afterUid ORDER BY uid DESC")
+    suspend fun unreadAfter(folderId: Long, afterUid: Long): List<MessageEntity>
+
+    @Query("SELECT id, isSeen FROM messages WHERE id IN (:ids)")
+    suspend fun seenStates(ids: List<Long>): List<SeenState>
+}
+
+data class SeenState(val id: Long, val isSeen: Boolean)
+
+@Dao
+interface ActionDao {
+    @Insert
+    suspend fun insert(action: PendingAction): Long
+
+    @Query("SELECT * FROM pending_actions ORDER BY id")
+    suspend fun all(): List<PendingAction>
+
+    @Query("SELECT uid FROM pending_actions WHERE folderName = :folderName")
+    suspend fun pendingUids(folderName: String): List<Long>
+
+    @Query("DELETE FROM pending_actions WHERE id = :id")
+    suspend fun delete(id: Long)
+
+    @Query("UPDATE pending_actions SET attempts = attempts + 1 WHERE id = :id")
+    suspend fun countAttempt(id: Long)
 }

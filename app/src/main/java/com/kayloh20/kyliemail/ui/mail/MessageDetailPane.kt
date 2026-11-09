@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,7 +14,12 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.HideImage
+import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.Print
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,6 +54,11 @@ fun MessageDetailPane(
     onRetryBody: () -> Unit,
     onLoadRemoteImages: () -> Unit,
     onTrustSender: () -> Unit,
+    canArchive: Boolean,
+    onArchive: () -> Unit,
+    onDelete: () -> Unit,
+    onToggleRead: () -> Unit,
+    onToggleFlag: () -> Unit,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
@@ -75,14 +86,20 @@ fun MessageDetailPane(
         var remoteBlocked by remember(message.id) { mutableStateOf(false) }
         val html = message.bodyHtml?.takeIf { it.isNotBlank() }
 
-        MessageHeader(
+        MessageToolbar(
             message = message,
+            canArchive = canArchive,
+            onArchive = onArchive,
+            onDelete = onDelete,
+            onToggleRead = onToggleRead,
+            onToggleFlag = onToggleFlag,
             onPrint = if (message.bodyLoaded) {
                 { MessagePrinter.print(context, message, remoteImagesAllowed, inlineImages) }
             } else {
                 null
             },
         )
+        MessageHeader(message = message)
         HorizontalDivider()
 
         if (remoteBlocked && !remoteImagesAllowed) {
@@ -123,8 +140,36 @@ fun MessageDetailPane(
 }
 
 @Composable
-private fun MessageHeader(message: MessageEntity, onPrint: (() -> Unit)?) {
-    Row(Modifier.fillMaxWidth().padding(start = 28.dp, end = 12.dp, top = 16.dp, bottom = 12.dp)) {
+private fun MessageToolbar(
+    message: MessageEntity,
+    canArchive: Boolean,
+    onArchive: () -> Unit,
+    onDelete: () -> Unit,
+    onToggleRead: () -> Unit,
+    onToggleFlag: () -> Unit,
+    onPrint: (() -> Unit)?,
+) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (canArchive) TooltipIconButton(Icons.Outlined.Archive, "Archive", onArchive)
+        TooltipIconButton(Icons.Outlined.Delete, "Delete", onDelete)
+        TooltipIconButton(
+            if (message.isSeen) Icons.Outlined.MarkEmailUnread else Icons.Outlined.MarkEmailRead,
+            if (message.isSeen) "Mark as unread" else "Mark as read",
+            onToggleRead,
+        )
+        TooltipIconButton(
+            if (message.isFlagged) Icons.Filled.Flag else Icons.Outlined.Flag,
+            if (message.isFlagged) "Remove flag" else "Flag",
+            onToggleFlag,
+        )
+        Spacer(Modifier.weight(1f))
+        if (onPrint != null) TooltipIconButton(Icons.Outlined.Print, "Print or save as PDF", onPrint)
+    }
+}
+
+@Composable
+private fun MessageHeader(message: MessageEntity) {
+    Row(Modifier.fillMaxWidth().padding(start = 28.dp, end = 12.dp, top = 4.dp, bottom = 12.dp)) {
         SelectionContainer(Modifier.weight(1f)) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(message.subject.ifBlank { "(no subject)" }, style = MaterialTheme.typography.headlineSmall)
@@ -154,7 +199,6 @@ private fun MessageHeader(message: MessageEntity, onPrint: (() -> Unit)?) {
                 }
             }
         }
-        if (onPrint != null) TooltipIconButton(Icons.Outlined.Print, "Print or save as PDF", onPrint)
     }
 }
 

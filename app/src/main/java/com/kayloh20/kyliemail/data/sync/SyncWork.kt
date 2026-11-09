@@ -9,12 +9,15 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.kayloh20.kyliemail.KylieMailApp
+import com.kayloh20.kyliemail.data.push.MailPushService
 import java.util.concurrent.TimeUnit
 
 /** Background safety net: checks for mail even when the app is closed. */
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val container = (applicationContext as KylieMailApp).container
+        // Bring the instant-notification connection back if Android stopped it (allowed or not, the sync below runs).
+        if (container.credentials.account.value != null) MailPushService.start(applicationContext)
         return when (container.syncEngine.sync()) {
             SyncOutcome.Success, SyncOutcome.NotSignedIn -> Result.success()
             SyncOutcome.AuthFailed -> Result.failure()

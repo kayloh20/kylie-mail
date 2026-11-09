@@ -9,6 +9,7 @@ class KylieMailApp : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        container.notifier.createChannels()
         if (container.credentials.account.value != null) {
             container.syncScheduler.schedulePeriodic()
         }
