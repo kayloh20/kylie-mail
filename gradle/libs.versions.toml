@@ -1,20 +1,20 @@
 [versions]
-agp = "8.13.2"
-kotlin = "2.2.21"
-ksp = "2.2.21-2.0.4"
-composeBom = "2025.12.01"
+agp = "9.5.1"
+kotlin = "2.4.21"
+ksp = "2.3.13"
+composeBom = "2026.09.00"
 materialIcons = "1.7.8"
 activityCompose = "1.12.4"
 coreKtx = "1.17.0"
 lifecycle = "2.9.4"
-room = "2.8.4"
-work = "2.11.0"
+room = "2.8.5"
+work = "2.12.0"
 webkit = "1.14.0"
 coroutines = "1.10.2"
 androidMail = "1.6.8"
 junit = "4.13.2"
-robolectric = "4.16.1"
-roborazzi = "1.50.0"
+robolectric = "4.17"
+roborazzi = "1.78.0"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -41,10 +41,10 @@ roborazzi = { module = "io.github.takahirom.roborazzi:roborazzi", version.ref = 
 roborazzi-compose = { module = "io.github.takahirom.roborazzi:roborazzi-compose", version.ref = "roborazzi" }
 compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
 compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
+kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 room = { id = "androidx.room", version.ref = "room" }

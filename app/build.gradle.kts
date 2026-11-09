@@ -2,7 +2,6 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.room)
@@ -10,7 +9,7 @@ plugins {
 
 android {
     namespace = "com.kayloh20.kyliemail"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.kayloh20.kyliemail"
