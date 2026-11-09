@@ -91,10 +91,15 @@ class ComposeActivity : ComponentActivity() {
     companion object {
         private const val EXTRA_DRAFT_ID = "draft_id"
 
-        fun intent(context: Context, draftId: Long): Intent =
-            Intent(context, ComposeActivity::class.java)
-                .putExtra(EXTRA_DRAFT_ID, draftId)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT or Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
+        fun intent(context: Context, draftId: Long): Intent {
+            val intent = Intent(context, ComposeActivity::class.java).putExtra(EXTRA_DRAFT_ID, draftId)
+            // Separate windows suit large screens; on a phone, compose is a normal screen that Back returns from.
+            return if (context.resources.configuration.smallestScreenWidthDp >= 600) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT or Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
+            } else {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        }
 
         /** Opens a draft in a window about the size of a desktop mail composer. */
         fun open(context: Context, draftId: Long) {

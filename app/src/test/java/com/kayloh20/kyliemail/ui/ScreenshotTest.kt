@@ -10,6 +10,10 @@ import com.kayloh20.kyliemail.ui.settings.FilingSettings
 import com.kayloh20.kyliemail.ui.settings.SendingSettings
 import com.kayloh20.kyliemail.ui.mail.WritingActions
 import com.kayloh20.kyliemail.ui.mail.FileActions
+import com.kayloh20.kyliemail.ui.mail.TouchActions
+import com.kayloh20.kyliemail.ui.settings.SwipeSettings
+import com.kayloh20.kyliemail.data.settings.SwipeAction
+import androidx.compose.runtime.Composable
 import com.kayloh20.kyliemail.data.db.AttachmentEntity
 import com.kayloh20.kyliemail.ui.settings.TrainingContent
 import com.kayloh20.kyliemail.data.filing.FolderSuggestion
@@ -123,6 +127,7 @@ class ScreenshotTest {
                         onDismiss = {},
                         filing = FilingSettings(true, {}, "Learned from 2,340 emails in 9 folders, and keeps learning as you file.", {}),
                         sending = SendingSettings("Kylie", {}, "Kylie\nCheer captain 📣", {}),
+                        swipes = SwipeSettings(SwipeAction.READ, {}, SwipeAction.DELETE, {}),
                     )
                 }
             }
@@ -148,6 +153,101 @@ class ScreenshotTest {
                         onStop = {},
                         onClose = {},
                     )
+                }
+            }
+        }
+    }
+
+    private fun touch(selecting: Boolean, swipes: Boolean, count: Int = 0) = TouchActions(
+        swipeEnabled = swipes,
+        swipeRight = SwipeAction.READ,
+        swipeLeft = SwipeAction.DELETE,
+        onSwipe = { _, _ -> },
+        onLongPress = {},
+        selecting = selecting,
+        selectionCount = count,
+        canArchive = true,
+        onClearSelection = {},
+        onArchive = {},
+        onDelete = {},
+        onMove = {},
+        onToggleRead = {},
+        onToggleFlag = {},
+    )
+
+    @Composable
+    private fun phoneList(selecting: Boolean, modifier: Modifier) = MessageListPane(
+        title = "Inbox",
+        messages = messages,
+        selectedIds = if (selecting) setOf(2L, 4L) else emptySet(),
+        cursorId = null,
+        syncState = SyncState(),
+        listState = rememberLazyListState(),
+        onClick = { _, _, _ -> },
+        onContextMenu = {},
+        contextMenu = { _, _ -> },
+        onRefresh = {},
+        onSignOut = {},
+        onOpenFolders = {},
+        onOpenSettings = {},
+        onNewMessage = {},
+        touch = touch(selecting = selecting, swipes = true, count = 2),
+        modifier = modifier,
+    )
+
+    @Test
+    @Config(qualifiers = "w411dp-h891dp-xxhdpi")
+    fun phonePortrait() = captureRoboImage("build/screenshots/phone-portrait.png") {
+        KylieMailTheme(darkTheme = false) {
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) { phoneList(false, Modifier.fillMaxSize()) }
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w411dp-h891dp-xxhdpi")
+    fun phonePickingMessages() = captureRoboImage("build/screenshots/phone-selecting.png") {
+        KylieMailTheme(darkTheme = true) {
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) { phoneList(true, Modifier.fillMaxSize()) }
+        }
+    }
+
+    /** About the width of an S26 Ultra on its side: two panes, not three. */
+    @Test
+    @Config(qualifiers = "w891dp-h411dp-xxhdpi")
+    fun phoneLandscape() {
+        val store = InlineImageStore(Files.createTempDirectory("inline").toFile())
+        captureRoboImage("build/screenshots/phone-landscape.png") {
+            KylieMailTheme(darkTheme = false) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    Row(Modifier.fillMaxSize()) {
+                        phoneList(false, Modifier.width(360.dp).fillMaxHeight())
+                        PaneDivider(onDrag = {})
+                        MessageDetailPane(
+                            message = open,
+                            selectionCount = 1,
+                            bodyError = null,
+                            remoteImagesAllowed = false,
+                            inlineImages = store,
+                            onRetryBody = {},
+                            onLoadRemoteImages = {},
+                            onTrustSender = {},
+                            canArchive = true,
+                            onArchive = {},
+                            onDelete = {},
+                            onToggleRead = {},
+                            onToggleFlag = {},
+                            onMove = {},
+                            onClearSelection = {},
+                            suggestions = suggestions,
+                            filingTrained = true,
+                            onFile = {},
+                            onTrainFiling = {},
+                            writing = WritingActions(false, {}, {}, {}, {}),
+                            files = FileActions(emptyList(), emptySet(), {}, {}, {}),
+                            onBack = null,
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        )
+                    }
                 }
             }
         }
@@ -182,6 +282,7 @@ class ScreenshotTest {
                             onOpenFolders = null,
                             onOpenSettings = {},
                             onNewMessage = {},
+                            touch = touch(selecting = false, swipes = false),
                             modifier = Modifier.width(400.dp).fillMaxHeight(),
                         )
                         PaneDivider(onDrag = {})

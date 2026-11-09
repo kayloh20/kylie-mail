@@ -35,6 +35,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.kayloh20.kyliemail.data.settings.ThemeMode
+import com.kayloh20.kyliemail.data.settings.SwipeAction
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.outlined.ArrowDropDown
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import com.kayloh20.kyliemail.ui.mail.TooltipIconButton
 import com.kayloh20.kyliemail.ui.theme.KylieTheme
 
@@ -44,6 +54,14 @@ data class SendingSettings(
     val onNameChange: (String) -> Unit,
     val signature: String,
     val onSignatureChange: (String) -> Unit,
+)
+
+/** What swiping a message does on touch screens. */
+data class SwipeSettings(
+    val right: SwipeAction,
+    val onRightChange: (SwipeAction) -> Unit,
+    val left: SwipeAction,
+    val onLeftChange: (SwipeAction) -> Unit,
 )
 
 /** What the Smart filing section shows and does. */
@@ -60,13 +78,14 @@ fun SettingsDialog(
     onThemeModeChange: (ThemeMode) -> Unit,
     filing: FilingSettings,
     sending: SendingSettings,
+    swipes: SwipeSettings,
     accountEmail: String,
     onSignOut: () -> Unit,
     versionName: String,
     onDismiss: () -> Unit,
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        SettingsContent(themeMode, onThemeModeChange, filing, sending, accountEmail, onSignOut, versionName, onDismiss)
+        SettingsContent(themeMode, onThemeModeChange, filing, sending, swipes, accountEmail, onSignOut, versionName, onDismiss)
     }
 }
 
@@ -76,6 +95,7 @@ fun SettingsContent(
     onThemeModeChange: (ThemeMode) -> Unit,
     filing: FilingSettings,
     sending: SendingSettings,
+    swipes: SwipeSettings,
     accountEmail: String,
     onSignOut: () -> Unit,
     versionName: String,
@@ -150,6 +170,18 @@ fun SettingsContent(
 
             HorizontalDivider(Modifier.padding(horizontal = 24.dp))
 
+            Section("Swipe actions") {
+                SwipeChoice("Swipe right", swipes.right, swipes.onRightChange)
+                SwipeChoice("Swipe left", swipes.left, swipes.onLeftChange)
+                Text(
+                    "On touch screens and narrower windows. Swiped messages can be undone like any other.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            HorizontalDivider(Modifier.padding(horizontal = 24.dp))
+
             Section("Smart filing") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -212,6 +244,32 @@ private fun Section(title: String, content: @Composable () -> Unit) {
     ) {
         Text(title, style = MaterialTheme.typography.labelMedium, color = KylieTheme.colors.textMuted)
         content()
+    }
+}
+
+@Composable
+private fun SwipeChoice(label: String, value: SwipeAction, onChange: (SwipeAction) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Box {
+            OutlinedButton(onClick = { open = true }, shape = MaterialTheme.shapes.small) {
+                Text(value.label)
+                Icon(Icons.Outlined.ArrowDropDown, contentDescription = null)
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                SwipeAction.entries.forEach { action ->
+                    DropdownMenuItem(
+                        text = { Text(action.label) },
+                        onClick = {
+                            open = false
+                            onChange(action)
+                        },
+                        trailingIcon = if (action == value) ({ Icon(Icons.Outlined.Check, contentDescription = "Current") }) else null,
+                    )
+                }
+            }
+        }
     }
 }
 

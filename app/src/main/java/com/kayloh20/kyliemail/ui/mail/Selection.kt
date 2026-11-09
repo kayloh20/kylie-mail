@@ -8,8 +8,11 @@ data class Selection(
     val ids: Set<Long> = emptySet(),
     val anchor: Long? = null,
     val cursor: Long? = null,
+    /** Started by a long press on a touch screen: taps add and remove messages instead of opening them. */
+    val touch: Boolean = false,
 ) {
-    val single: Long? get() = ids.singleOrNull()
+    /** The message to show in the reading pane; none while picking messages by touch. */
+    val single: Long? get() = if (touch) null else ids.singleOrNull()
 
     companion object {
         fun of(id: Long) = Selection(setOf(id), id, id)
@@ -18,7 +21,18 @@ data class Selection(
 
 /** Desktop-style selection rules, kept pure so they can be tested. [order] is the list as shown. */
 object SelectionRules {
+    /** A long press starts picking messages by touch. */
+    fun startTouch(current: Selection, id: Long): Selection =
+        if (current.touch) toggleTouch(current, id) else Selection(setOf(id), id, id, touch = true)
+
+    private fun toggleTouch(current: Selection, id: Long): Selection {
+        val ids = if (id in current.ids) current.ids - id else current.ids + id
+        // Unselecting the last message ends touch selection.
+        return if (ids.isEmpty()) Selection() else current.copy(ids = ids, anchor = id, cursor = id)
+    }
+
     fun click(current: Selection, order: List<Long>, id: Long, ctrl: Boolean, shift: Boolean): Selection {
+        if (current.touch && !ctrl && !shift) return toggleTouch(current, id)
         if (shift) {
             val from = current.anchor?.let(order::indexOf)?.takeIf { it >= 0 }
             val to = order.indexOf(id)

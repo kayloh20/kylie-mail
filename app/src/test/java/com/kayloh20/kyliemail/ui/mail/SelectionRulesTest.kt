@@ -1,6 +1,7 @@
 package com.kayloh20.kyliemail.ui.mail
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SelectionRulesTest {
@@ -53,5 +54,34 @@ class SelectionRulesTest {
     @Test fun selectAllAndOrdering() {
         assertEquals(order.toSet(), SelectionRules.selectAll(Selection(), order).ids)
         assertEquals(listOf(10L, 40L), SelectionRules.ordered(Selection(setOf(40L, 10L)), order))
+    }
+}
+
+class TouchSelectionTest {
+    private val order = listOf(10L, 20L, 30L)
+
+    @Test fun longPressStartsPickingWithoutOpeningAnything() {
+        val selection = SelectionRules.startTouch(Selection.of(10), 20)
+        assertEquals(setOf(20L), selection.ids)
+        assertEquals(null, selection.single)
+    }
+
+    @Test fun tapsAddAndRemoveWhilePicking() {
+        var selection = SelectionRules.startTouch(Selection(), 10)
+        selection = SelectionRules.click(selection, order, 30, ctrl = false, shift = false)
+        assertEquals(setOf(10L, 30L), selection.ids)
+        selection = SelectionRules.click(selection, order, 10, ctrl = false, shift = false)
+        assertEquals(setOf(30L), selection.ids)
+        assertTrue(selection.touch)
+    }
+
+    @Test fun removingTheLastMessageEndsPicking() {
+        val selection = SelectionRules.click(SelectionRules.startTouch(Selection(), 10), order, 10, ctrl = false, shift = false)
+        assertEquals(Selection(), selection)
+    }
+
+    @Test fun aNormalTapOpensWhenNotPicking() {
+        assertEquals(Selection.of(20), SelectionRules.click(Selection(), order, 20, ctrl = false, shift = false))
+        assertEquals(20L, Selection.of(20).single)
     }
 }

@@ -23,6 +23,7 @@ import com.kayloh20.kyliemail.data.settings.ThemeMode
 import com.kayloh20.kyliemail.ui.settings.SettingsDialog
 import com.kayloh20.kyliemail.ui.settings.FilingSettings
 import com.kayloh20.kyliemail.ui.settings.SendingSettings
+import com.kayloh20.kyliemail.ui.settings.SwipeSettings
 import com.kayloh20.kyliemail.ui.settings.TrainingDialog
 import com.kayloh20.kyliemail.data.filing.TrainingState
 import java.text.NumberFormat
@@ -105,6 +106,8 @@ class MainActivity : ComponentActivity() {
                             val filingEnabled by container.settings.filingSuggestions.collectAsStateWithLifecycle()
                             val senderName by container.settings.displayName.collectAsStateWithLifecycle()
                             val signature by container.settings.signature.collectAsStateWithLifecycle()
+                            val swipeRight by container.settings.swipeRight.collectAsStateWithLifecycle()
+                            val swipeLeft by container.settings.swipeLeft.collectAsStateWithLifecycle()
                             if (showSettings) {
                                 SettingsDialog(
                                     themeMode = themeMode,
@@ -123,6 +126,12 @@ class MainActivity : ComponentActivity() {
                                         onNameChange = container.settings::setDisplayName,
                                         signature = signature,
                                         onSignatureChange = container.settings::setSignature,
+                                    ),
+                                    swipes = SwipeSettings(
+                                        right = swipeRight,
+                                        onRightChange = container.settings::setSwipeRight,
+                                        left = swipeLeft,
+                                        onLeftChange = container.settings::setSwipeLeft,
                                     ),
                                     accountEmail = signedIn.email,
                                     onSignOut = {

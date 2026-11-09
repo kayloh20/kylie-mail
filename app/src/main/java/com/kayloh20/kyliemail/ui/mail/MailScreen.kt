@@ -56,7 +56,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 
-private val ExpandedWidth = 840.dp
+// Three panes need real room; a phone in landscape (about 900dp) gets two.
+private val ExpandedWidth = 1000.dp
 private val MediumWidth = 600.dp
 
 @Composable
@@ -85,6 +86,8 @@ fun MailScreen(
     val filingTrained by viewModel.filingTrained.collectAsStateWithLifecycle()
     val filingEnabled by viewModel.filingEnabled.collectAsStateWithLifecycle()
     val inDrafts by viewModel.inDrafts.collectAsStateWithLifecycle()
+    val swipeRight by viewModel.swipeRight.collectAsStateWithLifecycle()
+    val swipeLeft by viewModel.swipeLeft.collectAsStateWithLifecycle()
     val writing = WritingActions(
         inDrafts = inDrafts,
         onReply = { viewModel.reply(ReplyMode.REPLY) },
@@ -210,8 +213,27 @@ fun MailScreen(
         modifier = paneModifier,
     )
 
+    // Picking messages by touch: Back ends it before anything else.
+    BackHandler(enabled = selection.touch) { viewModel.clearSelection() }
+
     @Composable
-    fun listPane(showMenu: Boolean, paneModifier: Modifier) = MessageListPane(
+    fun listPane(showMenu: Boolean, paneModifier: Modifier, swipes: Boolean) = MessageListPane(
+        touch = TouchActions(
+            swipeEnabled = swipes,
+            swipeRight = swipeRight,
+            swipeLeft = swipeLeft,
+            onSwipe = viewModel::swipe,
+            onLongPress = viewModel::startTouchSelection,
+            selecting = selection.touch,
+            selectionCount = selection.ids.size,
+            canArchive = canArchive,
+            onClearSelection = viewModel::clearSelection,
+            onArchive = viewModel::archiveSelected,
+            onDelete = viewModel::deleteSelected,
+            onMove = viewModel::openMovePicker,
+            onToggleRead = viewModel::toggleReadSelected,
+            onToggleFlag = viewModel::toggleFlagSelected,
+        ),
         title = folderTitle,
         messages = messages,
         selectedIds = selection.ids,
@@ -295,7 +317,7 @@ fun MailScreen(
                         .background(MaterialTheme.colorScheme.surfaceContainerLow),
                 )
                 VerticalDivider()
-                listPane(showMenu = false, paneModifier = Modifier.width(listWidth.coerceAtMost(maxList).dp).fillMaxHeight())
+                listPane(showMenu = false, paneModifier = Modifier.width(listWidth.coerceAtMost(maxList).dp).fillMaxHeight(), swipes = false)
                 PaneDivider(onDrag = { delta -> listWidth = (listWidth + delta).coerceIn(280f, maxList) })
                 detailPane(showBack = false, paneModifier = Modifier.weight(1f).fillMaxHeight())
             }
@@ -306,17 +328,18 @@ fun MailScreen(
             ) {
                 if (medium) {
                     Row(Modifier.fillMaxSize()) {
-                        listPane(showMenu = true, paneModifier = Modifier.width(listWidth.coerceAtMost(maxList).dp).fillMaxHeight())
+                        listPane(showMenu = true, paneModifier = Modifier.width(listWidth.coerceAtMost(maxList).dp).fillMaxHeight(), swipes = true)
                         PaneDivider(onDrag = { delta -> listWidth = (listWidth + delta).coerceIn(280f, maxList) })
                         detailPane(showBack = false, paneModifier = Modifier.weight(1f).fillMaxHeight())
                     }
                 } else {
-                    val showingMessage = selectedMessageId != null || selection.ids.size > 1
+                    // On a phone, picking several messages by touch stays in the list.
+                    val showingMessage = selectedMessageId != null || (selection.ids.size > 1 && !selection.touch)
                     BackHandler(enabled = showingMessage) { viewModel.clearSelection() }
                     if (showingMessage) {
                         detailPane(showBack = true, paneModifier = Modifier.fillMaxSize())
                     } else {
-                        listPane(showMenu = true, paneModifier = Modifier.fillMaxSize())
+                        listPane(showMenu = true, paneModifier = Modifier.fillMaxSize(), swipes = true)
                     }
                 }
             }

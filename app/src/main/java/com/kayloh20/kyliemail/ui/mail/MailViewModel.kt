@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import com.kayloh20.kyliemail.data.filing.FilingEngine
 import com.kayloh20.kyliemail.data.filing.FolderSuggestion
 import com.kayloh20.kyliemail.data.settings.AppSettings
+import com.kayloh20.kyliemail.data.settings.SwipeAction
 import com.kayloh20.kyliemail.data.db.FolderEntity
 import com.kayloh20.kyliemail.data.db.MessageEntity
 import com.kayloh20.kyliemail.data.db.MessageSummary
@@ -126,6 +127,8 @@ class MailViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     val filingEnabled: StateFlow<Boolean> = settings.filingSuggestions
+    val swipeRight: StateFlow<SwipeAction> = settings.swipeRight
+    val swipeLeft: StateFlow<SwipeAction> = settings.swipeLeft
 
     private val _picker = MutableStateFlow<PickerMode?>(null)
     val picker: StateFlow<PickerMode?> = _picker.asStateFlow()
@@ -200,6 +203,11 @@ class MailViewModel(
     }
 
     /** Right-clicking a message outside the selection selects it, as desktop apps do. */
+    /** A long press on a touch screen starts picking messages. */
+    fun startTouchSelection(id: Long) {
+        _selection.value = SelectionRules.startTouch(_selection.value, id)
+    }
+
     fun prepareContextMenu(id: Long) {
         if (id !in _selection.value.ids) _selection.value = Selection.of(id)
     }
@@ -216,7 +224,30 @@ class MailViewModel(
         }
     }
 
-    private fun targets(): List<Long> = SelectionRules.ordered(_selection.value, order())
+    /** A swiped message being moved, which acts on that message without changing the selection. */
+    private var moveOverride: List<Long>? = null
+
+    private fun targets(): List<Long> = moveOverride ?: SelectionRules.ordered(_selection.value, order())
+
+    /** What a swipe does to one message, leaving the selection alone unless that message leaves the list. */
+    fun swipe(id: Long, action: SwipeAction) {
+        val message = messages.value.firstOrNull { it.id == id } ?: return
+        when (action) {
+            SwipeAction.NONE -> Unit
+            SwipeAction.READ -> viewModelScope.launch {
+                repository.perform(id, if (message.isSeen) UserAction.MARK_UNREAD else UserAction.MARK_READ)
+            }
+            SwipeAction.FLAG -> viewModelScope.launch {
+                repository.perform(id, if (message.isFlagged) UserAction.UNFLAG else UserAction.FLAG)
+            }
+            SwipeAction.ARCHIVE -> removeIds(listOf(id), UserAction.ARCHIVE, null)
+            SwipeAction.DELETE -> removeIds(listOf(id), UserAction.DELETE, null)
+            SwipeAction.MOVE -> {
+                moveOverride = listOf(id)
+                _picker.value = PickerMode.MOVE
+            }
+        }
+    }
 
     // Actions
 
@@ -245,11 +276,13 @@ class MailViewModel(
     }
 
     /** Archives, deletes or moves the selection, then selects the message after it, like desktop mail apps. */
-    private fun removeSelected(action: UserAction, targetFolderId: Long?) {
-        val ids = targets()
+    private fun removeSelected(action: UserAction, targetFolderId: Long?) = removeIds(targets(), action, targetFolderId)
+
+    private fun removeIds(ids: List<Long>, action: UserAction, targetFolderId: Long?) {
         if (ids.isEmpty()) return
         val before = _selection.value
-        val next = SelectionRules.afterRemoval(order(), ids.toSet())
+        // Only move the selection along if what was selected is leaving.
+        val next = if (before.ids.any { it in ids }) SelectionRules.afterRemoval(order(), ids.toSet()) else before
         viewModelScope.launch {
             val result = repository.performAll(ids, action, targetFolderId)
             if (result.applied == 0) return@launch
@@ -375,6 +408,7 @@ class MailViewModel(
     // Folder pickers
 
     fun openMovePicker() {
+        moveOverride = null
         if (targets().isNotEmpty()) _picker.value = PickerMode.MOVE
     }
 
@@ -384,6 +418,7 @@ class MailViewModel(
 
     fun closePicker() {
         _picker.value = null
+        moveOverride = null
     }
 
     fun pickFolder(id: Long) {
@@ -394,6 +429,7 @@ class MailViewModel(
             PickerMode.GO_TO -> selectFolder(id)
             null -> Unit
         }
+        moveOverride = null
     }
 
     /** How many messages the move picker would move, for its title. */

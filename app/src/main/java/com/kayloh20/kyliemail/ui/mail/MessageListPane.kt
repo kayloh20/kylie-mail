@@ -5,6 +5,23 @@ import androidx.compose.ui.draw.drawBehind
 import com.kayloh20.kyliemail.ui.theme.KylieTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.MarkEmailRead
+import androidx.compose.material.icons.outlined.MarkEmailUnread
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.Color
+import com.kayloh20.kyliemail.data.settings.SwipeAction
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -34,6 +51,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.Attachment
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Edit
@@ -45,7 +63,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
-import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -92,9 +109,17 @@ fun MessageListPane(
     onOpenFolders: (() -> Unit)?,
     onOpenSettings: () -> Unit,
     onNewMessage: () -> Unit,
+    touch: TouchActions,
     modifier: Modifier = Modifier,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    // The pull indicator only shows for refreshes started by pulling; others use the bar under the title.
+    var pulled by remember { mutableStateOf(false) }
+    var wasRunning by remember { mutableStateOf(false) }
+    LaunchedEffect(syncState.running) {
+        if (wasRunning && !syncState.running) pulled = false
+        wasRunning = syncState.running
+    }
 
     // Keep the keyboard cursor on screen.
     LaunchedEffect(cursorId) {
@@ -106,7 +131,9 @@ fun MessageListPane(
     }
 
     Column(modifier) {
-        TopAppBar(
+        if (touch.selecting) {
+            SelectionBar(touch)
+        } else TopAppBar(
             title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             navigationIcon = {
                 if (onOpenFolders != null) {
@@ -134,7 +161,7 @@ fun MessageListPane(
             windowInsets = WindowInsets(0),
         )
 
-        if (syncState.running) {
+        if (syncState.running && !pulled) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
         } else {
             Spacer(Modifier.height(4.dp))
@@ -142,28 +169,140 @@ fun MessageListPane(
 
         SyncBanner(syncState.lastOutcome, onRetry = onRefresh, onSignOut = onSignOut)
 
-        if (messages.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    if (syncState.running) "Checking iCloud…" else "No messages",
-                    color = KylieTheme.colors.textMuted,
-                )
-            }
-        } else {
+        PullToRefreshBox(
+            isRefreshing = pulled,
+            onRefresh = {
+                pulled = true
+                onRefresh()
+            },
+            modifier = Modifier.fillMaxSize(),
+        ) {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                if (messages.isEmpty()) {
+                    // Still scrollable, so an empty folder can be pulled to refresh.
+                    item(key = "empty") {
+                        Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                if (syncState.running) "Checking iCloud…" else "No messages",
+                                color = KylieTheme.colors.textMuted,
+                            )
+                        }
+                    }
+                }
                 items(messages, key = { it.id }) { message ->
-                    MessageRow(
-                        message = message,
-                        selected = message.id in selectedIds,
-                        onClick = { ctrl, shift -> onClick(message.id, ctrl, shift) },
-                        onContextMenu = { onContextMenu(message.id) },
-                        contextMenu = contextMenu,
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Column(Modifier.animateItem()) {
+                        SwipeableRow(message, touch) {
+                            MessageRow(
+                                message = message,
+                                selected = message.id in selectedIds,
+                                selecting = touch.selecting,
+                                onClick = { ctrl, shift -> onClick(message.id, ctrl, shift) },
+                                onContextMenu = { onContextMenu(message.id) },
+                                onLongPress = { touch.onLongPress(message.id) },
+                                contextMenu = contextMenu,
+                            )
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    }
                 }
             }
         }
     }
+}
+
+/** Touch-screen behaviour for the message list: swipes, long-press selecting, and the selection bar. */
+data class TouchActions(
+    val swipeEnabled: Boolean,
+    val swipeRight: SwipeAction,
+    val swipeLeft: SwipeAction,
+    val onSwipe: (Long, SwipeAction) -> Unit,
+    val onLongPress: (Long) -> Unit,
+    val selecting: Boolean,
+    val selectionCount: Int,
+    val canArchive: Boolean,
+    val onClearSelection: () -> Unit,
+    val onArchive: () -> Unit,
+    val onDelete: () -> Unit,
+    val onMove: () -> Unit,
+    val onToggleRead: () -> Unit,
+    val onToggleFlag: () -> Unit,
+)
+
+/** Replaces the title while picking messages by touch. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SelectionBar(touch: TouchActions) {
+    TopAppBar(
+        title = { Text("${touch.selectionCount} selected") },
+        navigationIcon = { TooltipIconButton(Icons.Outlined.Close, "Done", touch.onClearSelection) },
+        actions = {
+            if (touch.canArchive) TooltipIconButton(Icons.Outlined.Archive, "Archive", touch.onArchive)
+            TooltipIconButton(Icons.Outlined.Delete, "Delete", touch.onDelete)
+            TooltipIconButton(Icons.AutoMirrored.Outlined.DriveFileMove, "Move to…", touch.onMove)
+            TooltipIconButton(Icons.Outlined.MarkEmailRead, "Mark as read or unread", touch.onToggleRead)
+            TooltipIconButton(Icons.Outlined.Flag, "Flag or remove flag", touch.onToggleFlag)
+        },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        windowInsets = WindowInsets(0),
+    )
+}
+
+/** Swipe a message left or right to act on it. The row springs back; removed messages then leave the list. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SwipeableRow(message: MessageSummary, touch: TouchActions, content: @Composable () -> Unit) {
+    val enabled = touch.swipeEnabled && !touch.selecting
+    if (!enabled || (touch.swipeRight == SwipeAction.NONE && touch.swipeLeft == SwipeAction.NONE)) {
+        content()
+        return
+    }
+    val scope = rememberCoroutineScope()
+    val state = rememberSwipeToDismissBoxState()
+    SwipeToDismissBox(
+        state = state,
+        enableDismissFromStartToEnd = touch.swipeRight != SwipeAction.NONE,
+        enableDismissFromEndToStart = touch.swipeLeft != SwipeAction.NONE,
+        onDismiss = { direction ->
+            val action = if (direction == SwipeToDismissBoxValue.StartToEnd) touch.swipeRight else touch.swipeLeft
+            touch.onSwipe(message.id, action)
+            scope.launch { state.reset() }
+        },
+        backgroundContent = {
+            val direction = state.dismissDirection
+            val action = when (direction) {
+                SwipeToDismissBoxValue.StartToEnd -> touch.swipeRight
+                SwipeToDismissBoxValue.EndToStart -> touch.swipeLeft
+                SwipeToDismissBoxValue.Settled -> SwipeAction.NONE
+            }
+            if (action == SwipeAction.NONE) return@SwipeToDismissBox
+            val (color, icon, label) = swipeLook(action, message)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = if (direction == SwipeToDismissBoxValue.StartToEnd) Arrangement.Start else Arrangement.End,
+                modifier = Modifier.fillMaxSize().background(color).padding(horizontal = 24.dp),
+            ) {
+                Icon(icon, contentDescription = null, tint = Color.White)
+                Spacer(Modifier.width(8.dp))
+                Text(label, color = Color.White, style = MaterialTheme.typography.labelLarge)
+            }
+        },
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun swipeLook(action: SwipeAction, message: MessageSummary): Triple<Color, ImageVector, String> = when (action) {
+    SwipeAction.READ -> Triple(
+        MaterialTheme.colorScheme.primary,
+        if (message.isSeen) Icons.Outlined.MarkEmailUnread else Icons.Outlined.MarkEmailRead,
+        if (message.isSeen) "Unread" else "Read",
+    )
+    SwipeAction.FLAG -> Triple(KylieTheme.colors.warning, Icons.Outlined.Flag, if (message.isFlagged) "Unflag" else "Flag")
+    SwipeAction.ARCHIVE -> Triple(MaterialTheme.colorScheme.primary, Icons.Outlined.Archive, "Archive")
+    SwipeAction.MOVE -> Triple(MaterialTheme.colorScheme.primary, Icons.AutoMirrored.Outlined.DriveFileMove, "Move")
+    SwipeAction.DELETE -> Triple(MaterialTheme.colorScheme.error, Icons.Outlined.Delete, "Delete")
+    SwipeAction.NONE -> Triple(Color.Transparent, Icons.Outlined.Close, "")
 }
 
 @Composable
@@ -195,8 +334,10 @@ private fun SyncBanner(outcome: SyncOutcome?, onRetry: () -> Unit, onSignOut: ()
 private fun MessageRow(
     message: MessageSummary,
     selected: Boolean,
+    selecting: Boolean,
     onClick: (ctrl: Boolean, shift: Boolean) -> Unit,
     onContextMenu: () -> Unit,
+    onLongPress: () -> Unit,
     contextMenu: @Composable (message: MessageSummary, close: () -> Unit) -> Unit,
 ) {
     val unread = !message.isSeen
@@ -242,16 +383,24 @@ private fun MessageRow(
                     pressModifiers[0] = false
                     pressModifiers[1] = false
                 },
-                onLongClick = {
-                    onContextMenu()
-                    menuOffset = DpOffset(24.dp, 0.dp)
-                },
+                // A long press starts picking messages; right-click is the menu.
+                onLongClick = onLongPress,
             )
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Box(Modifier.padding(top = 6.dp).size(8.dp)) {
-            if (unread) Box(Modifier.size(8.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
+        if (selecting) {
+            // While picking by touch, each row shows whether it's picked.
+            Icon(
+                if (selected) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                contentDescription = if (selected) "Selected" else "Not selected",
+                tint = if (selected) MaterialTheme.colorScheme.primary else KylieTheme.colors.textMuted,
+                modifier = Modifier.size(20.dp),
+            )
+        } else {
+            Box(Modifier.padding(top = 6.dp).size(8.dp)) {
+                if (unread) Box(Modifier.size(8.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
+            }
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
