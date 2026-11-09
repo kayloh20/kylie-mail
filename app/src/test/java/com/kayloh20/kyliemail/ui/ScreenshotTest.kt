@@ -77,10 +77,15 @@ class ScreenshotTest {
     )
 
     @Test
-    fun mailScreen() {
+    fun mailScreenDark() = mailScreen("build/screenshots/mail-dark.png", dark = true)
+
+    @Test
+    fun mailScreenLight() = mailScreen("build/screenshots/mail-light.png", dark = false)
+
+    private fun mailScreen(path: String, dark: Boolean) {
         val store = InlineImageStore(Files.createTempDirectory("inline").toFile())
-        captureRoboImage("build/screenshots/mail.png") {
-            KylieMailTheme {
+        captureRoboImage(path) {
+            KylieMailTheme(darkTheme = dark) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     Row(Modifier.fillMaxSize()) {
                         FolderPane(

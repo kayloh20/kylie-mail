@@ -1,13 +1,18 @@
 package com.kayloh20.kyliemail.ui.theme
 
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RippleConfiguration
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
@@ -17,31 +22,80 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kayloh20.kyliemail.R
 
-/** The Kylie Mail palette. Names match the design tokens. */
-object Palette {
-    val BgPrimary = Color(0xFF0F0F12)
-    val BgSecondary = Color(0xFF16161D)
-    val BgTertiary = Color(0xFF1E1E28)
-    val BgElevated = Color(0xFF252530)
+/** The design tokens for one appearance. Names match the CSS custom properties. */
+@Immutable
+data class Palette(
+    val isDark: Boolean,
+    val bgPrimary: Color,
+    val bgSecondary: Color,
+    val bgTertiary: Color,
+    val bgElevated: Color,
+    val textPrimary: Color,
+    val textSecondary: Color,
+    val textMuted: Color,
+    val accent: Color,
+    val onAccent: Color,
+    val accentHover: Color,
+    val accentSubtle: Color,
+    val accentGlow: Color,
+    val border: Color,
+    val borderStrong: Color,
+    val error: Color,
+    val warning: Color,
+    val success: Color,
+) {
+    companion object {
+        val Dark = Palette(
+            isDark = true,
+            bgPrimary = Color(0xFF0F0F12),
+            bgSecondary = Color(0xFF16161D),
+            bgTertiary = Color(0xFF1E1E28),
+            bgElevated = Color(0xFF252530),
+            textPrimary = Color(0xFFE8E6F0),
+            textSecondary = Color(0xFF9895A8),
+            textMuted = Color(0xFF5A5670),
+            accent = Color(0xFF9271DB),
+            // Dark text on the accent is about 5:1; white would be about 3.8:1.
+            onAccent = Color(0xFF0F0F12),
+            accentHover = Color(0xFFA88BE6),
+            accentSubtle = Color(0x1F9271DB), // 12%
+            accentGlow = Color(0x409271DB), // 25%
+            border = Color(0x0FFFFFFF), // white 6%
+            borderStrong = Color(0x1AFFFFFF), // white 10%
+            error = Color(0xFFD94455),
+            warning = Color(0xFFE0A040),
+            success = Color(0xFF4ADE80),
+        )
 
-    val TextPrimary = Color(0xFFE8E6F0)
-    val TextSecondary = Color(0xFF9895A8)
-    val TextMuted = Color(0xFF5A5670)
-
-    val Accent = Color(0xFF9271DB)
-    val AccentHover = Color(0xFFA88BE6)
-    val AccentSubtle = Color(0x1F9271DB) // rgba(146,113,219,0.12)
-    val AccentGlow = Color(0x409271DB) // rgba(146,113,219,0.25)
-
-    val Border = Color(0x0FFFFFFF) // rgba(255,255,255,0.06)
-    val BorderStrong = Color(0x1AFFFFFF) // rgba(255,255,255,0.10)
-
-    val Error = Color(0xFFD94455)
-    val Warning = Color(0xFFE0A040)
-    val Success = Color(0xFF4ADE80)
+        /**
+         * The same identity on light backgrounds: cool lavender-tinted neutrals, and a deeper accent
+         * so purple text and icons stay above 4.5:1 on white.
+         */
+        val Light = Palette(
+            isDark = false,
+            bgPrimary = Color(0xFFFCFBFE),
+            bgSecondary = Color(0xFFF4F2F9),
+            bgTertiary = Color(0xFFECE9F4),
+            bgElevated = Color(0xFFFFFFFF),
+            textPrimary = Color(0xFF1A1823),
+            textSecondary = Color(0xFF615D73),
+            textMuted = Color(0xFF9C98AE),
+            accent = Color(0xFF7A55D0),
+            onAccent = Color(0xFFFFFFFF),
+            accentHover = Color(0xFF6A45C2),
+            accentSubtle = Color(0x1A7A55D0), // 10%
+            accentGlow = Color(0x337A55D0), // 20%
+            border = Color(0x14140F28), // ink 8%
+            borderStrong = Color(0x24140F28), // ink 14%
+            error = Color(0xFFC93545),
+            warning = Color(0xFFB8791A),
+            success = Color(0xFF16A34A),
+        )
+    }
 }
 
 /** Palette colors with no Material 3 role. Read them with [KylieTheme.colors]. */
@@ -55,69 +109,63 @@ data class ExtendedColors(
     val success: Color,
 )
 
-private val Extended = ExtendedColors(
-    textMuted = Palette.TextMuted,
-    accentHover = Palette.AccentHover,
-    accentGlow = Palette.AccentGlow,
-    borderStrong = Palette.BorderStrong,
-    warning = Palette.Warning,
-    success = Palette.Success,
-)
+private fun Palette.extended() = ExtendedColors(textMuted, accentHover, accentGlow, borderStrong, warning, success)
 
-private val LocalExtendedColors = staticCompositionLocalOf { Extended }
+private val LocalExtendedColors = staticCompositionLocalOf { Palette.Dark.extended() }
 
 object KylieTheme {
     val colors: ExtendedColors
         @Composable get() = LocalExtendedColors.current
 }
 
-private val Colors = darkColorScheme(
-    // Accent
-    primary = Palette.Accent,
-    // Dark text on the accent keeps button labels above 4.5:1 contrast; white would be about 3.8:1.
-    onPrimary = Palette.BgPrimary,
-    primaryContainer = Palette.AccentSubtle,
-    onPrimaryContainer = Palette.AccentHover,
-    inversePrimary = Palette.AccentHover,
-    secondary = Palette.AccentHover,
-    onSecondary = Palette.BgPrimary,
-    // Selected rows and folders.
-    secondaryContainer = Palette.AccentSubtle,
-    onSecondaryContainer = Palette.TextPrimary,
-    tertiary = Palette.AccentHover,
-    onTertiary = Palette.BgPrimary,
-    tertiaryContainer = Palette.AccentSubtle,
-    onTertiaryContainer = Palette.AccentHover,
+private fun Palette.colorScheme(): ColorScheme {
+    val base = if (isDark) darkColorScheme() else lightColorScheme()
+    return base.copy(
+        primary = accent,
+        onPrimary = onAccent,
+        primaryContainer = accentSubtle,
+        onPrimaryContainer = accentHover,
+        inversePrimary = accentHover,
+        secondary = accentHover,
+        onSecondary = onAccent,
+        // Selected rows and folders.
+        secondaryContainer = accentSubtle,
+        onSecondaryContainer = textPrimary,
+        tertiary = accentHover,
+        onTertiary = onAccent,
+        tertiaryContainer = accentSubtle,
+        onTertiaryContainer = accentHover,
 
-    // Surfaces, from the window up to menus and dialogs.
-    background = Palette.BgPrimary,
-    onBackground = Palette.TextPrimary,
-    surface = Palette.BgPrimary,
-    onSurface = Palette.TextPrimary,
-    surfaceVariant = Palette.BgTertiary,
-    onSurfaceVariant = Palette.TextSecondary,
-    surfaceDim = Palette.BgPrimary,
-    surfaceBright = Palette.BgElevated,
-    surfaceContainerLowest = Palette.BgPrimary,
-    surfaceContainerLow = Palette.BgSecondary,
-    surfaceContainer = Palette.BgElevated,
-    surfaceContainerHigh = Palette.BgElevated,
-    surfaceContainerHighest = Palette.BgElevated,
-    // No purple tint on raised surfaces, so they stay exactly the palette colors.
-    surfaceTint = Color.Transparent,
-    // Snackbars and tooltips.
-    inverseSurface = Palette.BgElevated,
-    inverseOnSurface = Palette.TextPrimary,
+        // Surfaces, from the window up to menus and dialogs.
+        background = bgPrimary,
+        onBackground = textPrimary,
+        surface = bgPrimary,
+        onSurface = textPrimary,
+        surfaceVariant = bgTertiary,
+        onSurfaceVariant = textSecondary,
+        surfaceDim = bgPrimary,
+        surfaceBright = bgElevated,
+        surfaceContainerLowest = bgPrimary,
+        surfaceContainerLow = bgSecondary,
+        surfaceContainer = bgElevated,
+        surfaceContainerHigh = bgElevated,
+        surfaceContainerHighest = bgElevated,
+        // No purple tint on raised surfaces, so they stay exactly the palette colors.
+        surfaceTint = Color.Transparent,
+        // Snackbars and tooltips.
+        inverseSurface = if (isDark) bgElevated else textPrimary,
+        inverseOnSurface = if (isDark) textPrimary else bgPrimary,
 
-    outline = Palette.BorderStrong,
-    outlineVariant = Palette.Border,
+        outline = borderStrong,
+        outlineVariant = border,
 
-    error = Palette.Error,
-    onError = Color.White,
-    errorContainer = Color(0x29D94455),
-    onErrorContainer = Palette.TextPrimary,
-    scrim = Color.Black,
-)
+        error = error,
+        onError = Color.White,
+        errorContainer = error.copy(alpha = 0.16f),
+        onErrorContainer = textPrimary,
+        scrim = Color.Black,
+    )
+}
 
 val Inter = FontFamily(
     Font(R.font.inter_regular, FontWeight.Normal),
@@ -153,18 +201,29 @@ private val Type = Typography(
     labelSmall = style(11, 16, FontWeight.Medium),
 )
 
+/** Tighter corners than Material's defaults: closer to a desktop app than to Gmail's pills. */
+private val KylieShapes = Shapes(
+    extraSmall = RoundedCornerShape(4.dp),
+    small = RoundedCornerShape(6.dp),
+    medium = RoundedCornerShape(8.dp),
+    large = RoundedCornerShape(12.dp),
+    extraLarge = RoundedCornerShape(16.dp),
+)
+
+/** Follows the system's light or dark setting. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun KylieMailTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = Colors, typography = Type) {
+fun KylieMailTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
+    val palette = if (darkTheme) Palette.Dark else Palette.Light
+    MaterialTheme(colorScheme = palette.colorScheme(), typography = Type, shapes = KylieShapes) {
         CompositionLocalProvider(
-            LocalExtendedColors provides Extended,
+            LocalExtendedColors provides palette.extended(),
             // Hover and press states take the accent-hover color.
-            LocalRippleConfiguration provides RippleConfiguration(color = Palette.AccentHover),
+            LocalRippleConfiguration provides RippleConfiguration(color = palette.accentHover),
             // Selected text glows in the accent.
             LocalTextSelectionColors provides TextSelectionColors(
-                handleColor = Palette.Accent,
-                backgroundColor = Palette.AccentGlow,
+                handleColor = palette.accent,
+                backgroundColor = palette.accentGlow,
             ),
             content = content,
         )

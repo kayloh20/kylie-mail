@@ -1,5 +1,7 @@
 package com.kayloh20.kyliemail.ui.mail
 
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.drawBehind
 import com.kayloh20.kyliemail.ui.theme.KylieTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -188,6 +190,7 @@ private fun MessageRow(
     val unread = !message.isSeen
     val background = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
     val density = LocalDensity.current
+    val accent = MaterialTheme.colorScheme.primary
     // Modifier keys held at the moment of the press, read when the click completes.
     val pressModifiers = remember { arrayOf(false, false) }
     var menuOffset by remember { mutableStateOf<DpOffset?>(null) }
@@ -199,6 +202,10 @@ private fun MessageRow(
             .fillMaxWidth()
             .onSizeChanged { rowHeight = it.height }
             .background(background)
+            .drawBehind {
+                // The same slim accent bar the folder list uses marks selected messages.
+                if (selected) drawRect(accent, size = Size(3.dp.toPx(), size.height))
+            }
             .pointerInput(message.id) {
                 awaitPointerEventScope {
                     while (true) {

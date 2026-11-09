@@ -106,7 +106,12 @@ fun SignInScreen(viewModel: SignInViewModel, modifier: Modifier = Modifier) {
             }
 
             Spacer(Modifier.height(4.dp))
-            Button(onClick = viewModel::signIn, enabled = viewModel.canSubmit, modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = viewModel::signIn,
+                enabled = viewModel.canSubmit,
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier.fillMaxWidth().height(44.dp),
+            ) {
                 if (viewModel.busy) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 } else {
