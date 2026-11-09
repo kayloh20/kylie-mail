@@ -1,5 +1,6 @@
 package com.kayloh20.kyliemail.ui.mail
 
+import com.kayloh20.kyliemail.ui.theme.KylieTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Archive
@@ -64,5 +65,5 @@ fun MessageContextMenu(
 
 @Composable
 private fun Shortcut(keys: String) {
-    Text(keys, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(keys, style = MaterialTheme.typography.labelMedium, color = KylieTheme.colors.textMuted)
 }

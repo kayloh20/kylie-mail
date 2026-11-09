@@ -1,5 +1,6 @@
 package com.kayloh20.kyliemail
 
+import androidx.activity.SystemBarStyle
 import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
@@ -37,7 +38,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // The app is always dark, so system bar icons stay light even when the system is in light mode.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
         val container = (application as KylieMailApp).container
         handleIntent(intent)
 

@@ -1,5 +1,7 @@
 package com.kayloh20.kyliemail.ui.mail
 
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.background
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -209,7 +211,13 @@ fun MailScreen(
 
         if (wide) {
             Row(Modifier.fillMaxSize()) {
-                folderPane(inDrawer = false, paneModifier = Modifier.width(248.dp).fillMaxHeight())
+                folderPane(
+                    inDrawer = false,
+                    paneModifier = Modifier
+                        .width(248.dp)
+                        .fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow),
+                )
                 VerticalDivider()
                 listPane(showMenu = false, paneModifier = Modifier.width(listWidth.coerceAtMost(maxList).dp).fillMaxHeight())
                 PaneDivider(onDrag = { delta -> listWidth = (listWidth + delta).coerceIn(280f, maxList) })

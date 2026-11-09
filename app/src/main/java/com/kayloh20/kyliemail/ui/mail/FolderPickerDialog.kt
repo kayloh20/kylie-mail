@@ -1,5 +1,7 @@
 package com.kayloh20.kyliemail.ui.mail
 
+import androidx.compose.foundation.BorderStroke
+import com.kayloh20.kyliemail.ui.theme.KylieTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -85,7 +87,8 @@ fun FolderPickerDialog(
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(20.dp),
-            tonalElevation = 6.dp,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            border = BorderStroke(1.dp, KylieTheme.colors.borderStrong),
             modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(),
         ) {
             Column(Modifier.padding(vertical = 16.dp)) {

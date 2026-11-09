@@ -1,5 +1,6 @@
 package com.kayloh20.kyliemail.ui.mail
 
+import com.kayloh20.kyliemail.ui.theme.KylieTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -94,8 +96,8 @@ fun MessageDetailPane(
         if (message == null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Outlined.MarkEmailUnread, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Select a message to read it", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Icon(Icons.Outlined.MarkEmailUnread, contentDescription = null, tint = KylieTheme.colors.textMuted)
+                    Text("Select a message to read it", color = KylieTheme.colors.textMuted)
                 }
             }
             return@Column
@@ -182,6 +184,7 @@ private fun MessageToolbar(
             if (message.isFlagged) Icons.Filled.Flag else Icons.Outlined.Flag,
             if (message.isFlagged) "Remove flag" else "Flag",
             onToggleFlag,
+            tint = if (message.isFlagged) KylieTheme.colors.warning else LocalContentColor.current,
         )
         Spacer(Modifier.weight(1f))
         if (onPrint != null) TooltipIconButton(Icons.Outlined.Print, "Print or save as PDF", onPrint)
@@ -251,7 +254,7 @@ private fun MessageHeader(message: MessageEntity) {
 
 @Composable
 private fun RemoteImagesBanner(sender: String, onLoad: () -> Unit, onTrust: () -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
         Row(
             Modifier.padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,

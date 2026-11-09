@@ -91,6 +91,7 @@ class MailNotifier(private val context: Context, private val db: MailDatabase) {
             .setWhen(message.receivedAt)
             .setShowWhen(true)
             .setCategory(NotificationCompat.CATEGORY_EMAIL)
+            .setColor(ACCENT)
             .setGroup(GROUP)
             .setAutoCancel(true)
             .setContentIntent(openIntent(message.id))
@@ -175,6 +176,7 @@ class MailNotifier(private val context: Context, private val db: MailDatabase) {
 
     companion object {
         const val CHANNEL_MAIL = "new_mail"
+        private const val ACCENT = 0xFF9271DB.toInt()
         const val CHANNEL_CONNECTION = "connection"
         const val ID_CONNECTION = 100
         private const val ID_MESSAGE = 1

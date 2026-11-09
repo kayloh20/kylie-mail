@@ -1,5 +1,7 @@
 package com.kayloh20.kyliemail.ui.mail
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -48,6 +50,11 @@ fun FolderPane(
                     },
                     selected = folder.id == selectedFolderId,
                     onClick = { onSelect(folder.id) },
+                    colors = NavigationDrawerItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                        selectedBadgeColor = MaterialTheme.colorScheme.primary,
+                        unselectedContainerColor = Color.Transparent,
+                    ),
                     modifier = Modifier.padding(start = 12.dp + 16.dp * folder.depth.coerceAtMost(4), end = 12.dp),
                 )
             }

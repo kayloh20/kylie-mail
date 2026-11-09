@@ -58,6 +58,17 @@ android {
         compose = true
     }
 
+    testOptions {
+        // Screenshot tests render real layouts, fonts and colors on the JVM.
+        unitTests.isIncludeAndroidResources = true
+        // Write the images to app/build/screenshots on every run.
+        unitTests.all {
+            it.systemProperty("roborazzi.test.record", "true")
+            // CI skips them: they download a 200 MB Android runtime and are for looking at, not pass/fail.
+            if (System.getenv("CI") == "true") it.filter.excludeTestsMatching("*ScreenshotTest")
+        }
+    }
+
     packaging {
         resources {
             excludes += setOf(
@@ -105,4 +116,10 @@ dependencies {
     implementation(libs.android.activation)
 
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    debugImplementation(libs.compose.ui.test.manifest)
 }

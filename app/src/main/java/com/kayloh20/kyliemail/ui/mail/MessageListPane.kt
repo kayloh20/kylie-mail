@@ -1,5 +1,6 @@
 package com.kayloh20.kyliemail.ui.mail
 
+import com.kayloh20.kyliemail.ui.theme.KylieTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -40,6 +41,8 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -129,7 +132,7 @@ fun MessageListPane(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     if (syncState.running) "Checking iCloud…" else "No messages",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = KylieTheme.colors.textMuted,
                 )
             }
         } else {
@@ -142,7 +145,7 @@ fun MessageListPane(
                         onContextMenu = { onContextMenu(message.id) },
                         contextMenu = contextMenu,
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
         }
@@ -247,13 +250,13 @@ private fun MessageRow(
                     Spacer(Modifier.width(4.dp))
                 }
                 if (message.isFlagged) {
-                    Icon(Icons.Filled.Flag, contentDescription = "Flagged", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Filled.Flag, contentDescription = "Flagged", tint = KylieTheme.colors.warning, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                 }
                 Text(
                     formatListDate(message.receivedAt),
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = KylieTheme.colors.textMuted,
                 )
             }
             Text(
@@ -286,14 +289,20 @@ private fun MessageRow(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TooltipIconButton(icon: ImageVector, label: String, onClick: () -> Unit, enabled: Boolean = true) {
+fun TooltipIconButton(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    tint: Color = LocalContentColor.current,
+) {
     TooltipBox(
         positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Below),
         tooltip = { PlainTooltip { Text(label) } },
         state = rememberTooltipState(),
     ) {
         IconButton(onClick = onClick, enabled = enabled) {
-            Icon(icon, contentDescription = label)
+            Icon(icon, contentDescription = label, tint = if (enabled) tint else tint.copy(alpha = 0.38f))
         }
     }
 }

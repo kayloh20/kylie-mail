@@ -8,7 +8,7 @@
         android:fillColor="#FFFFFF"
         android:pathData="M33,39H75A4,4 0 0 1 79,43V67A4,4 0 0 1 75,71H33A4,4 0 0 1 29,67V43A4,4 0 0 1 33,39Z" />
     <path
-        android:strokeColor="#D63A6F"
+        android:strokeColor="#9271DB"
         android:strokeWidth="3"
         android:strokeLineJoin="round"
         android:strokeLineCap="round"
