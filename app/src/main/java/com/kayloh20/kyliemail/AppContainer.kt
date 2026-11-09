@@ -4,6 +4,8 @@ import android.content.Context
 import com.kayloh20.kyliemail.data.MailActions
 import com.kayloh20.kyliemail.data.MailRepository
 import com.kayloh20.kyliemail.data.MoveHistory
+import com.kayloh20.kyliemail.data.filing.FilingEngine
+import com.kayloh20.kyliemail.data.filing.FolderSuggestion
 import com.kayloh20.kyliemail.data.notify.MailNotifier
 import com.kayloh20.kyliemail.data.settings.AppSettings
 import kotlinx.coroutines.CoroutineScope
@@ -26,13 +28,18 @@ class AppContainer(context: Context) {
     val inlineImages = InlineImageStore(context.filesDir)
     val imageTrust = ImageTrust(context)
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    val notifier = MailNotifier(context, database)
+    val notifier: MailNotifier = MailNotifier(context, database) { messageId -> filingSuggestionFor(messageId) }
     val syncEngine = SyncEngine(database, credentials, connector, inlineImages).apply {
         inboxListener = notifier::onInboxSynced
     }
     val syncScheduler = SyncScheduler(context)
     val moveHistory = MoveHistory(context)
-    val actions = MailActions(database, syncEngine, appScope, moveHistory, onMessageHandled = notifier::cancel)
+    val filing = FilingEngine(database, credentials, syncEngine, appScope)
+    val actions = MailActions(database, syncEngine, appScope, moveHistory, filing, onMessageHandled = notifier::cancel)
+    /** The confident suggestion for a new message, for its notification, when suggestions are on. */
+    private suspend fun filingSuggestionFor(messageId: Long): FolderSuggestion? =
+        if (!settings.filingSuggestions.value) null else filing.suggest(listOf(messageId), limit = 1).firstOrNull()?.takeIf { it.confident }
+
     val repository = MailRepository(
         database, credentials, syncEngine, syncScheduler, inlineImages, imageTrust, actions, notifier, moveHistory,
     )

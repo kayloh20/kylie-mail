@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.kayloh20.kyliemail.data.MailRepository
 import com.kayloh20.kyliemail.data.UndoToken
+import com.kayloh20.kyliemail.data.filing.FilingEngine
+import com.kayloh20.kyliemail.data.filing.FolderSuggestion
+import com.kayloh20.kyliemail.data.settings.AppSettings
 import com.kayloh20.kyliemail.data.db.FolderEntity
 import com.kayloh20.kyliemail.data.db.MessageEntity
 import com.kayloh20.kyliemail.data.db.MessageSummary
@@ -21,6 +24,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -32,7 +36,11 @@ enum class PickerMode { MOVE, GO_TO }
 data class Notice(val text: String, val undo: UndoToken? = null, val restore: Selection? = null)
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class MailViewModel(private val repository: MailRepository) : ViewModel() {
+class MailViewModel(
+    private val repository: MailRepository,
+    private val filing: FilingEngine,
+    private val settings: AppSettings,
+) : ViewModel() {
 
     val folders: StateFlow<List<FolderEntity>> =
         repository.folders.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -78,6 +86,24 @@ class MailViewModel(private val repository: MailRepository) : ViewModel() {
 
     private val _bodyError = MutableStateFlow<String?>(null)
     val bodyError: StateFlow<String?> = _bodyError.asStateFlow()
+
+    /** Smart filing suggestions for the selected mail, best first. Empty when turned off. */
+    val suggestions: StateFlow<List<FolderSuggestion>> =
+        combine(_selection, filing.version, settings.filingSuggestions) { selection, _, enabled -> selection to enabled }
+            .flatMapLatest { (selection, enabled) ->
+                if (!enabled || selection.ids.isEmpty()) {
+                    flowOf(emptyList())
+                } else {
+                    flow { emit(filing.suggest(SelectionRules.ordered(selection, order()))) }
+                }
+            }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** True once smart filing has something to learn from. */
+    val filingTrained: StateFlow<Boolean> = filing.exampleCount.map { it > 0 }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    val filingEnabled: StateFlow<Boolean> = settings.filingSuggestions
 
     private val _picker = MutableStateFlow<PickerMode?>(null)
     val picker: StateFlow<PickerMode?> = _picker.asStateFlow()

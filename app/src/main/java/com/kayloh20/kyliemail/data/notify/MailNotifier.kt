@@ -17,12 +17,18 @@ import com.kayloh20.kyliemail.R
 import com.kayloh20.kyliemail.data.db.FolderEntity
 import com.kayloh20.kyliemail.data.db.MailDatabase
 import com.kayloh20.kyliemail.data.db.MessageEntity
+import com.kayloh20.kyliemail.data.filing.FolderSuggestion
 import com.kayloh20.kyliemail.data.mail.FolderRole
 import com.kayloh20.kyliemail.data.sync.UserAction
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-class MailNotifier(private val context: Context, private val db: MailDatabase) {
+class MailNotifier(
+    private val context: Context,
+    private val db: MailDatabase,
+    /** A confident smart filing suggestion for a message, if any. */
+    private val suggest: suspend (messageId: Long) -> FolderSuggestion?,
+) {
     private val manager = NotificationManagerCompat.from(context)
     private val prefs = context.getSharedPreferences("notifications", Context.MODE_PRIVATE)
     private val mutex = Mutex()
@@ -52,7 +58,9 @@ class MailNotifier(private val context: Context, private val db: MailDatabase) {
         if (canPost() && plan.notifyUids.isNotEmpty()) {
             val byUid = unread.associateBy { it.uid }
             val canArchive = db.folders().getByRole(FolderRole.ARCHIVE) != null
-            plan.notifyUids.take(MAX_INDIVIDUAL).mapNotNull(byUid::get).forEach { post(it, canArchive) }
+            plan.notifyUids.take(MAX_INDIVIDUAL).mapNotNull(byUid::get).forEach { message ->
+                post(message, canArchive, runCatching { suggest(message.id) }.getOrNull())
+            }
         }
         clearHandled()
         updateSummary()
@@ -76,7 +84,7 @@ class MailNotifier(private val context: Context, private val db: MailDatabase) {
     }
 
     @android.annotation.SuppressLint("MissingPermission") // Checked in canPost().
-    private fun post(message: MessageEntity, canArchive: Boolean) {
+    private fun post(message: MessageEntity, canArchive: Boolean, suggestion: FolderSuggestion?) {
         val sender = message.fromName.ifBlank { message.fromAddress.ifBlank { "Unknown sender" } }
         val subject = message.subject.ifBlank { "(no subject)" }
         val builder = NotificationCompat.Builder(context, CHANNEL_MAIL)
@@ -95,7 +103,12 @@ class MailNotifier(private val context: Context, private val db: MailDatabase) {
             .setGroup(GROUP)
             .setAutoCancel(true)
             .setContentIntent(openIntent(message.id))
-            .addAction(0, "Mark as read", actionIntent(message.id, UserAction.MARK_READ))
+        // Android shows three actions; a confident filing suggestion takes the place of Mark as read.
+        if (suggestion != null) {
+            builder.addAction(0, "File to ${suggestion.displayName}", actionIntent(message.id, UserAction.MOVE, suggestion.folderId))
+        } else {
+            builder.addAction(0, "Mark as read", actionIntent(message.id, UserAction.MARK_READ))
+        }
         if (canArchive) builder.addAction(0, "Archive", actionIntent(message.id, UserAction.ARCHIVE))
         builder.addAction(0, "Delete", actionIntent(message.id, UserAction.DELETE))
         manager.notify(tag(message.id), ID_MESSAGE, builder.build())
@@ -147,11 +160,12 @@ class MailNotifier(private val context: Context, private val db: MailDatabase) {
         )
     }
 
-    private fun actionIntent(messageId: Long, action: UserAction): PendingIntent {
+    private fun actionIntent(messageId: Long, action: UserAction, targetFolderId: Long? = null): PendingIntent {
         val intent = Intent(context, NotificationActionReceiver::class.java)
             .setAction("$ACTION_PREFIX${action.name}")
             .putExtra(NotificationActionReceiver.EXTRA_MESSAGE_ID, messageId)
             .putExtra(NotificationActionReceiver.EXTRA_ACTION, action.name)
+        if (targetFolderId != null) intent.putExtra(NotificationActionReceiver.EXTRA_TARGET_FOLDER, targetFolderId)
         return PendingIntent.getBroadcast(
             context,
             (messageId * 8 + action.ordinal).toInt(),

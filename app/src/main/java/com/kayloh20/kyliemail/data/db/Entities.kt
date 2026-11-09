@@ -103,3 +103,33 @@ data class PendingAction(
     /** Held back until this time so it can still be undone. */
     @ColumnInfo(defaultValue = "0") val notBefore: Long = 0,
 )
+
+enum class ExampleSource { TRAINING, MOVE }
+
+/** One filed email the smart filing model learns from: headers only, never the body. */
+@Entity(
+    tableName = "filing_examples",
+    indices = [Index(value = ["folderName", "uid"], unique = true), Index(value = ["folderName"])],
+)
+data class FilingExampleEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val folderName: String,
+    /** The server UID for examples from training; null for moves made in the app. */
+    val uid: Long?,
+    val fromAddress: String,
+    val fromName: String,
+    /** Recipient addresses, comma separated. */
+    val recipients: String,
+    val subject: String,
+    val source: ExampleSource,
+    val createdAt: Long,
+)
+
+/** A folder the user chose to train on, and how far training has read it. */
+@Entity(tableName = "trained_folders")
+data class TrainedFolder(
+    @PrimaryKey val fullName: String,
+    val uidValidity: Long,
+    val highestUid: Long,
+    val trainedAt: Long,
+)

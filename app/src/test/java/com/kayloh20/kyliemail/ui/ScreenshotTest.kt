@@ -6,6 +6,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import com.kayloh20.kyliemail.data.settings.ThemeMode
 import com.kayloh20.kyliemail.ui.settings.SettingsContent
+import com.kayloh20.kyliemail.ui.settings.FilingSettings
+import com.kayloh20.kyliemail.ui.settings.TrainingContent
+import com.kayloh20.kyliemail.data.filing.FolderSuggestion
+import com.kayloh20.kyliemail.data.filing.TrainingState
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -57,6 +61,12 @@ class ScreenshotTest {
         folder(7, "Receipts", FolderRole.CUSTOM, unread = 1),
         folder(8, "Travel", FolderRole.CUSTOM),
         folder(9, "Travel/Japan 2027", FolderRole.CUSTOM, depth = 1),
+        folder(10, "Cheer Squad", FolderRole.CUSTOM),
+    ).map { it.copy(totalCount = (it.id * 137 % 900).toInt() + 40) }
+
+    private val suggestions = listOf(
+        FolderSuggestion(10, "Cheer Squad", "Cheer Squad", 0.71, "You've filed 23 emails from Madison Clarke here"),
+        FolderSuggestion(4, "Archive", "Archive", 0.38, "4 emails from Madison Clarke are here"),
     )
 
     private fun summary(id: Long, from: String, subject: String, preview: String, minutesAgo: Long, seen: Boolean, flagged: Boolean = false, attachments: Boolean = false) =
@@ -107,6 +117,31 @@ class ScreenshotTest {
                         onSignOut = {},
                         versionName = "0.1.0",
                         onDismiss = {},
+                        filing = FilingSettings(true, {}, "Learned from 2,340 emails in 9 folders, and keeps learning as you file.", {}),
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun trainingPickerDark() = training("build/screenshots/training-picker-dark.png", true, TrainingState.Idle)
+
+    @Test
+    fun trainingRunningLight() =
+        training("build/screenshots/training-running-light.png", false, TrainingState.Running("Receipts", 3, 9, 1240))
+
+    private fun training(path: String, dark: Boolean, state: TrainingState) {
+        captureRoboImage(path) {
+            KylieMailTheme(darkTheme = dark) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
+                    TrainingContent(
+                        folders = folders,
+                        trainedNames = setOf("Receipts", "Cheer Squad"),
+                        state = state,
+                        onStart = {},
+                        onStop = {},
+                        onClose = {},
                     )
                 }
             }
@@ -159,6 +194,10 @@ class ScreenshotTest {
                             onToggleFlag = {},
                             onMove = {},
                             onClearSelection = {},
+                            suggestions = suggestions,
+                            filingTrained = true,
+                            onFile = {},
+                            onTrainFiling = {},
                             onBack = null,
                             modifier = Modifier.weight(1f).fillMaxHeight(),
                         )

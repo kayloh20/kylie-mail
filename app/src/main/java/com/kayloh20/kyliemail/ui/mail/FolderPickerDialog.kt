@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Icon
@@ -47,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.kayloh20.kyliemail.data.db.FolderEntity
 import com.kayloh20.kyliemail.data.mail.FolderSearch
+import com.kayloh20.kyliemail.data.filing.FolderSuggestion
 
 /**
  * Type to find a folder: arrow keys move, Enter picks, Esc closes. With nothing typed,
@@ -60,11 +62,20 @@ fun FolderPickerDialog(
     excludeId: Long?,
     onPick: (Long) -> Unit,
     onDismiss: () -> Unit,
+    suggestions: List<FolderSuggestion> = emptyList(),
 ) {
     var query by remember { mutableStateOf("") }
     var highlighted by remember { mutableIntStateOf(0) }
-    val results = remember(query, folders, recentFullNames, excludeId) {
-        FolderSearch.rank(folders, query, recentFullNames, excludeId)
+    // With nothing typed, smart filing's suggestions come first, so Enter files to the best guess.
+    val reasons = remember(suggestions) { suggestions.associate { it.folderId to it.reason } }
+    val results = remember(query, folders, recentFullNames, excludeId, suggestions) {
+        val ranked = FolderSearch.rank(folders, query, recentFullNames, excludeId)
+        if (query.isNotBlank() || suggestions.isEmpty()) {
+            ranked
+        } else {
+            val suggested = suggestions.mapNotNull { s -> ranked.firstOrNull { it.id == s.folderId } }
+            suggested + ranked.filter { it.id !in reasons }
+        }
     }
     val recent = remember(recentFullNames) { recentFullNames.toSet() }
     val focus = remember { FocusRequester() }
@@ -151,7 +162,16 @@ fun FolderPickerDialog(
                             Spacer(Modifier.width(16.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(folder.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (path != folder.displayName) {
+                                val reason = reasons[folder.id]
+                                if (reason != null && query.isBlank()) {
+                                    Text(
+                                        reason,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                } else if (path != folder.displayName) {
                                     Text(
                                         path,
                                         style = MaterialTheme.typography.bodySmall,
@@ -161,7 +181,13 @@ fun FolderPickerDialog(
                                     )
                                 }
                             }
-                            if (folder.fullName in recent) {
+                            if (folder.id in reasons && query.isBlank()) {
+                                Icon(
+                                    Icons.Outlined.AutoAwesome,
+                                    contentDescription = "Suggested",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            } else if (folder.fullName in recent) {
                                 Icon(
                                     Icons.Outlined.History,
                                     contentDescription = "Recently used",

@@ -8,6 +8,8 @@ import com.kayloh20.kyliemail.data.db.MailDatabase
 import com.kayloh20.kyliemail.data.db.MessageEntity
 import com.kayloh20.kyliemail.data.db.ActionType
 import com.kayloh20.kyliemail.data.db.PendingAction
+import com.kayloh20.kyliemail.data.db.ExampleSource
+import com.kayloh20.kyliemail.data.db.FilingExampleEntity
 import com.kayloh20.kyliemail.data.mail.FolderRole
 import com.kayloh20.kyliemail.data.mail.ImapConnector
 import com.kayloh20.kyliemail.data.mail.InlineImageStore
@@ -97,6 +99,64 @@ class SyncEngine(
         if (credentials.account.value == null) return SyncOutcome.NotSignedIn
         withContext(Dispatchers.IO) { runCatchingMail { withConnection { store -> processActions(store) } } }
     }
+
+    /** What [collectFilingExamples] read from one folder. */
+    class FolderSample(val uidValidity: Long, val highestUid: Long, val examples: List<FilingExampleEntity>)
+
+    /**
+     * Reads sender, recipients and subject (never bodies) for smart filing. With [afterUid] it reads
+     * only newer mail; otherwise the newest [limit] emails. Returns null if the folder is gone.
+     */
+    suspend fun collectFilingExamples(folderName: String, afterUid: Long, knownValidity: Long, limit: Int): FolderSample? =
+        withContext(Dispatchers.IO) {
+            withConnection { store ->
+                val remote = store.getFolder(folderName) as IMAPFolder
+                if (!remote.exists()) return@withConnection null
+                remote.open(Folder.READ_ONLY)
+                try {
+                    val validity = remote.uidValidity
+                    val count = remote.messageCount
+                    val incremental = afterUid > 0 && validity == knownValidity
+                    val messages: Array<Message> = when {
+                        count <= 0 -> emptyArray()
+                        incremental -> remote.getMessagesByUID(afterUid + 1, UIDFolder.LASTUID)
+                        else -> SyncPlanner.initialSequenceRange(count, limit)?.let { remote.getMessages(it.first, it.last) } ?: emptyArray()
+                    }
+                    remote.fetch(
+                        messages,
+                        FetchProfile().apply {
+                            add(FetchProfile.Item.ENVELOPE)
+                            add(UIDFolder.FetchProfileItem.UID)
+                        },
+                    )
+                    val now = System.currentTimeMillis()
+                    val examples = messages.mapNotNull { message ->
+                        runCatching {
+                            val uid = remote.getUID(message)
+                            if (incremental && uid <= afterUid) return@runCatching null
+                            val sender = message.from?.firstOrNull() as? InternetAddress
+                            val recipients = listOf(Message.RecipientType.TO, Message.RecipientType.CC)
+                                .flatMap { type -> message.getRecipients(type)?.toList().orEmpty() }
+                                .mapNotNull { (it as? InternetAddress)?.address?.lowercase() }
+                            FilingExampleEntity(
+                                folderName = folderName,
+                                uid = uid,
+                                fromAddress = sender?.address.orEmpty().lowercase(),
+                                fromName = sender?.personal.orEmpty(),
+                                recipients = recipients.joinToString(","),
+                                subject = message.subject.orEmpty(),
+                                source = ExampleSource.TRAINING,
+                                createdAt = now,
+                            )
+                        }.getOrNull()
+                    }
+                    val highest = maxOf(if (incremental) afterUid else 0L, examples.maxOfOrNull { it.uid ?: 0L } ?: 0L)
+                    FolderSample(validity, highest, examples)
+                } finally {
+                    runCatching { remote.close(false) }
+                }
+            }
+        }
 
     /** Runs [block] while no sync is in progress, for changes that must not interleave with one. */
     suspend fun <T> exclusive(block: suspend () -> T): T = mutex.withLock { block() }

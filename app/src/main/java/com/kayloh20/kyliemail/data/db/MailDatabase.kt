@@ -9,15 +9,16 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [FolderEntity::class, MessageEntity::class, PendingAction::class],
-    version = 4,
+    entities = [FolderEntity::class, MessageEntity::class, PendingAction::class, FilingExampleEntity::class, TrainedFolder::class],
+    version = 5,
     exportSchema = true,
-    autoMigrations = [AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4)],
+    autoMigrations = [AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5)],
 )
 abstract class MailDatabase : RoomDatabase() {
     abstract fun folders(): FolderDao
     abstract fun messages(): MessageDao
     abstract fun actions(): ActionDao
+    abstract fun filing(): FilingDao
 
     companion object {
         fun create(context: Context): MailDatabase =

@@ -45,6 +45,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kayloh20.kyliemail.data.db.MessageEntity
+import com.kayloh20.kyliemail.data.filing.FolderSuggestion
 import com.kayloh20.kyliemail.data.mail.InlineImageStore
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -65,6 +66,10 @@ fun MessageDetailPane(
     onToggleFlag: () -> Unit,
     onMove: () -> Unit,
     onClearSelection: () -> Unit,
+    suggestions: List<FolderSuggestion>,
+    filingTrained: Boolean,
+    onFile: (Long) -> Unit,
+    onTrainFiling: () -> Unit,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
@@ -89,6 +94,8 @@ fun MessageDetailPane(
                 onToggleFlag = onToggleFlag,
                 onMove = onMove,
                 onClearSelection = onClearSelection,
+                suggestions = suggestions,
+                onFile = onFile,
             )
             return@Column
         }
@@ -121,6 +128,7 @@ fun MessageDetailPane(
             },
         )
         MessageHeader(message = message)
+        SuggestionBar(suggestions, filingTrained, onFile, onTrainFiling)
         HorizontalDivider()
 
         if (remoteBlocked && !remoteImagesAllowed) {
@@ -201,6 +209,8 @@ private fun BulkSelection(
     onToggleFlag: () -> Unit,
     onMove: () -> Unit,
     onClearSelection: () -> Unit,
+    suggestions: List<FolderSuggestion>,
+    onFile: (Long) -> Unit,
 ) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -212,6 +222,7 @@ private fun BulkSelection(
                 TooltipIconButton(Icons.Outlined.MarkEmailRead, "Mark as read or unread", onToggleRead)
                 TooltipIconButton(Icons.Outlined.Flag, "Flag or remove flag", onToggleFlag)
             }
+            SuggestionBar(suggestions, trained = true, onFile = onFile, onTrain = {})
             TextButton(onClick = onClearSelection) { Text("Clear selection") }
         }
     }

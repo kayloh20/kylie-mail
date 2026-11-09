@@ -4,6 +4,7 @@ import com.kayloh20.kyliemail.ui.theme.KylieTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.MarkEmailRead
@@ -15,6 +16,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import com.kayloh20.kyliemail.data.db.MessageSummary
+import com.kayloh20.kyliemail.data.filing.FolderSuggestion
 
 /** The right-click (or long-press) menu for a message, or for the whole selection when several are selected. */
 @Composable
@@ -27,7 +29,17 @@ fun MessageContextMenu(
     onArchive: () -> Unit,
     onMove: () -> Unit,
     onDelete: () -> Unit,
+    suggestion: FolderSuggestion? = null,
+    onFile: (Long) -> Unit = {},
 ) {
+    if (suggestion != null) {
+        DropdownMenuItem(
+            text = { Text("File to ${suggestion.displayName}") },
+            leadingIcon = { Icon(Icons.Outlined.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary) },
+            onClick = { onFile(suggestion.folderId) },
+        )
+        HorizontalDivider()
+    }
     val readLabel = when {
         multiple -> "Mark as read or unread"
         message.isSeen -> "Mark as unread"

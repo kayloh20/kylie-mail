@@ -61,6 +61,7 @@ fun MailScreen(
     openRequest: Long?,
     onOpenRequestHandled: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenTraining: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val folders by viewModel.folders.collectAsStateWithLifecycle()
@@ -76,6 +77,9 @@ fun MailScreen(
     val picker by viewModel.picker.collectAsStateWithLifecycle()
     val notice by viewModel.notice.collectAsStateWithLifecycle()
     val recentMoveTargets by viewModel.recentMoveTargets.collectAsStateWithLifecycle()
+    val suggestions by viewModel.suggestions.collectAsStateWithLifecycle()
+    val filingTrained by viewModel.filingTrained.collectAsStateWithLifecycle()
+    val filingEnabled by viewModel.filingEnabled.collectAsStateWithLifecycle()
     val snackbarHost = remember { SnackbarHostState() }
 
     // Show each notice; ones with Undo stay up for the undo window.
@@ -177,6 +181,8 @@ fun MailScreen(
                 onArchive = { close(); viewModel.archiveSelected() },
                 onMove = { close(); viewModel.openMovePicker() },
                 onDelete = { close(); viewModel.deleteSelected() },
+                suggestion = suggestions.firstOrNull { it.confident },
+                onFile = { id -> close(); viewModel.moveSelected(id) },
             )
         },
         onRefresh = viewModel::refresh,
@@ -203,6 +209,11 @@ fun MailScreen(
         onToggleFlag = viewModel::toggleFlagSelected,
         onMove = viewModel::openMovePicker,
         onClearSelection = viewModel::clearSelection,
+        suggestions = suggestions,
+        // Only nudge toward training when suggestions are turned on.
+        filingTrained = filingTrained || !filingEnabled,
+        onFile = viewModel::moveSelected,
+        onTrainFiling = onOpenTraining,
         onBack = if (showBack) ({ viewModel.clearSelection() }) else null,
         modifier = paneModifier,
     )
@@ -262,6 +273,7 @@ fun MailScreen(
                 excludeId = selectedFolderId,
                 onPick = viewModel::pickFolder,
                 onDismiss = viewModel::closePicker,
+                suggestions = suggestions,
             )
         }
         PickerMode.GO_TO -> FolderPickerDialog(

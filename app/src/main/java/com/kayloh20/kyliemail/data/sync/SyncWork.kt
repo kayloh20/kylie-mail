@@ -18,7 +18,10 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val container = (applicationContext as KylieMailApp).container
         // Bring the instant-notification connection back if Android stopped it (allowed or not, the sync below runs).
         if (container.credentials.account.value != null) MailPushService.start(applicationContext)
-        return when (container.syncEngine.sync()) {
+        val outcome = container.syncEngine.sync()
+        // Learn from mail filed into trained folders elsewhere, such as on an iPhone.
+        if (outcome == SyncOutcome.Success) container.filing.keepLearning()
+        return when (outcome) {
             SyncOutcome.Success, SyncOutcome.NotSignedIn -> Result.success()
             SyncOutcome.AuthFailed -> Result.failure()
             is SyncOutcome.Failed -> Result.retry()

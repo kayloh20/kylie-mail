@@ -106,6 +106,36 @@ interface MessageDao {
 data class SeenState(val id: Long, val isSeen: Boolean)
 
 @Dao
+interface FilingDao {
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertExamples(examples: List<FilingExampleEntity>): List<Long>
+
+    @Query("SELECT * FROM filing_examples")
+    suspend fun allExamples(): List<FilingExampleEntity>
+
+    @Query("SELECT COUNT(*) FROM filing_examples")
+    fun observeExampleCount(): Flow<Int>
+
+    @Query("DELETE FROM filing_examples WHERE id IN (:ids)")
+    suspend fun deleteExamples(ids: List<Long>)
+
+    @Query("DELETE FROM filing_examples WHERE folderName = :folderName AND source = 'TRAINING'")
+    suspend fun deleteTrainingExamples(folderName: String)
+
+    @Query("SELECT * FROM trained_folders")
+    suspend fun trainedFolders(): List<TrainedFolder>
+
+    @Query("SELECT * FROM trained_folders")
+    fun observeTrainedFolders(): Flow<List<TrainedFolder>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveTrainedFolder(folder: TrainedFolder)
+
+    @Query("DELETE FROM trained_folders WHERE fullName = :fullName")
+    suspend fun forgetTrainedFolder(fullName: String)
+}
+
+@Dao
 interface ActionDao {
     @Insert
     suspend fun insert(action: PendingAction): Long

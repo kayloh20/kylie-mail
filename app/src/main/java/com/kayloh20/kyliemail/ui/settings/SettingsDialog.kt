@@ -24,6 +24,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -36,17 +37,26 @@ import com.kayloh20.kyliemail.data.settings.ThemeMode
 import com.kayloh20.kyliemail.ui.mail.TooltipIconButton
 import com.kayloh20.kyliemail.ui.theme.KylieTheme
 
+/** What the Smart filing section shows and does. */
+data class FilingSettings(
+    val enabled: Boolean,
+    val onEnabledChange: (Boolean) -> Unit,
+    val status: String,
+    val onTrain: () -> Unit,
+)
+
 @Composable
 fun SettingsDialog(
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
+    filing: FilingSettings,
     accountEmail: String,
     onSignOut: () -> Unit,
     versionName: String,
     onDismiss: () -> Unit,
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        SettingsContent(themeMode, onThemeModeChange, accountEmail, onSignOut, versionName, onDismiss)
+        SettingsContent(themeMode, onThemeModeChange, filing, accountEmail, onSignOut, versionName, onDismiss)
     }
 }
 
@@ -54,6 +64,7 @@ fun SettingsDialog(
 fun SettingsContent(
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
+    filing: FilingSettings,
     accountEmail: String,
     onSignOut: () -> Unit,
     versionName: String,
@@ -97,6 +108,31 @@ fun SettingsContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+
+            HorizontalDivider(Modifier.padding(horizontal = 24.dp))
+
+            Section("Smart filing") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Suggest folders", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Learns where you file mail, on this device only.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = filing.enabled, onCheckedChange = filing.onEnabledChange)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        filing.status,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedButton(onClick = filing.onTrain, shape = MaterialTheme.shapes.small) { Text("Train…") }
+                }
             }
 
             HorizontalDivider(Modifier.padding(horizontal = 24.dp))

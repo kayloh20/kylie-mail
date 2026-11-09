@@ -5,6 +5,7 @@ import com.kayloh20.kyliemail.data.db.ActionType
 import com.kayloh20.kyliemail.data.db.MailDatabase
 import com.kayloh20.kyliemail.data.db.MessageEntity
 import com.kayloh20.kyliemail.data.db.PendingAction
+import com.kayloh20.kyliemail.data.filing.FilingEngine
 import com.kayloh20.kyliemail.data.sync.ActionPlanner
 import com.kayloh20.kyliemail.data.sync.SyncEngine
 import com.kayloh20.kyliemail.data.sync.UserAction
@@ -17,6 +18,7 @@ import kotlinx.coroutines.launch
 class UndoToken internal constructor(
     internal val actionIds: List<Long>,
     internal val removed: List<MessageEntity>,
+    internal val filingExampleIds: List<Long> = emptyList(),
 )
 
 data class ActionResult(
@@ -38,6 +40,7 @@ class MailActions(
     private val syncEngine: SyncEngine,
     private val scope: CoroutineScope,
     private val moveHistory: MoveHistory,
+    private val filing: FilingEngine,
     private val onMessageHandled: (messageId: Long) -> Unit,
 ) {
     private val folderDao = db.folders()
@@ -68,6 +71,7 @@ class MailActions(
         val removed = mutableListOf<MessageEntity>()
         val handled = mutableListOf<Long>()
         var targetName: String? = null
+        var targetFullName: String? = null
         val now = System.currentTimeMillis()
 
         db.withTransaction {
@@ -107,6 +111,7 @@ class MailActions(
                     }
                 }
                 targetName = target?.displayName
+                if (plan.type == ActionType.MOVE && action != UserAction.DELETE) targetFullName = target?.fullName
                 actionIds += actionDao.insert(
                     PendingAction(
                         type = plan.type,
@@ -124,6 +129,8 @@ class MailActions(
         if (actionIds.isEmpty()) return ActionResult(0, null)
         handled.forEach(onMessageHandled)
         if (action == UserAction.MOVE) chosenTarget?.let { moveHistory.record(it.fullName) }
+        // Filing a message teaches smart filing where this kind of mail goes.
+        val learned = targetFullName?.let { filing.recordMoves(removed, it) }.orEmpty()
 
         val held = undoable && removed.isNotEmpty()
         if (held) {
@@ -135,18 +142,23 @@ class MailActions(
         } else {
             requestFlush()
         }
-        return ActionResult(actionIds.size, if (held) UndoToken(actionIds, removed) else null, targetName)
+        return ActionResult(actionIds.size, if (held) UndoToken(actionIds, removed, learned) else null, targetName)
     }
 
     /** Puts removed messages back if their actions haven't been sent yet. Returns false if it was too late. */
-    suspend fun undo(token: UndoToken): Boolean = db.withTransaction {
-        val cancelled = actionDao.deleteAll(token.actionIds)
-        if (cancelled != token.actionIds.size) return@withTransaction false
-        messageDao.insertAll(token.removed)
-        token.removed.filter { !it.isSeen }.groupingBy { it.folderId }.eachCount().forEach { (folderId, count) ->
-            folderDao.adjustUnread(folderId, count)
+    suspend fun undo(token: UndoToken): Boolean {
+        val restored = db.withTransaction {
+            val cancelled = actionDao.deleteAll(token.actionIds)
+            if (cancelled != token.actionIds.size) return@withTransaction false
+            messageDao.insertAll(token.removed)
+            token.removed.filter { !it.isSeen }.groupingBy { it.folderId }.eachCount().forEach { (folderId, count) ->
+                folderDao.adjustUnread(folderId, count)
+            }
+            true
         }
-        true
+        // An undone move isn't a lesson.
+        if (restored) filing.forgetMoves(token.filingExampleIds)
+        return restored
     }
 
     /** Sends ready changes now. An action queued while a send is running gets another round right after. */

@@ -31,8 +31,12 @@ class MailRepository(
 ) {
     suspend fun perform(messageId: Long, action: UserAction): Boolean = actions.perform(messageId, action)
 
-    suspend fun performAll(messageIds: List<Long>, action: UserAction, targetFolderId: Long? = null): ActionResult =
-        actions.perform(messageIds, action, targetFolderId)
+    suspend fun performAll(
+        messageIds: List<Long>,
+        action: UserAction,
+        targetFolderId: Long? = null,
+        undoable: Boolean = true,
+    ): ActionResult = actions.perform(messageIds, action, targetFolderId, undoable)
 
     suspend fun undo(token: UndoToken): Boolean = actions.undo(token)
 

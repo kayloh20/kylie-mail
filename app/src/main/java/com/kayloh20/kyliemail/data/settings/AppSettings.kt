@@ -19,6 +19,16 @@ class AppSettings(private val context: Context) {
     )
     val themeMode: StateFlow<ThemeMode> = _themeMode.asStateFlow()
 
+    private val _filingSuggestions = MutableStateFlow(prefs.getBoolean(KEY_FILING, true))
+
+    /** Whether smart filing suggests folders. */
+    val filingSuggestions: StateFlow<Boolean> = _filingSuggestions.asStateFlow()
+
+    fun setFilingSuggestions(enabled: Boolean) {
+        prefs.edit { putBoolean(KEY_FILING, enabled) }
+        _filingSuggestions.value = enabled
+    }
+
     fun setThemeMode(mode: ThemeMode) {
         prefs.edit { putString(KEY_THEME, mode.name) }
         _themeMode.value = mode
@@ -42,5 +52,6 @@ class AppSettings(private val context: Context) {
 
     private companion object {
         const val KEY_THEME = "theme_mode"
+        const val KEY_FILING = "filing_suggestions"
     }
 }

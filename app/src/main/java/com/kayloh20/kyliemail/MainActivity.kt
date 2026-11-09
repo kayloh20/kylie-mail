@@ -21,6 +21,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.kayloh20.kyliemail.data.settings.ThemeMode
 import com.kayloh20.kyliemail.ui.settings.SettingsDialog
+import com.kayloh20.kyliemail.ui.settings.FilingSettings
+import com.kayloh20.kyliemail.ui.settings.TrainingDialog
+import com.kayloh20.kyliemail.data.filing.TrainingState
+import java.text.NumberFormat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
@@ -61,6 +65,7 @@ class MainActivity : ComponentActivity() {
                 enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
             }
             var showSettings by rememberSaveable { mutableStateOf(false) }
+            var showTraining by rememberSaveable { mutableStateOf(false) }
 
             KylieMailTheme(darkTheme = dark) {
                 Surface(
@@ -79,7 +84,7 @@ class MainActivity : ComponentActivity() {
                         key(signedIn.email) {
                             val vm: MailViewModel = viewModel(
                                 key = "mail:${signedIn.email}",
-                                factory = factoryOf { MailViewModel(container.repository) },
+                                factory = factoryOf { MailViewModel(container.repository, container.filing, container.settings) },
                             )
                             val openRequest by openRequests.collectAsStateWithLifecycle()
                             MailScreen(
@@ -87,12 +92,27 @@ class MainActivity : ComponentActivity() {
                                 openRequest = openRequest,
                                 onOpenRequestHandled = { openRequests.value = null },
                                 onOpenSettings = { showSettings = true },
+                                onOpenTraining = { showTraining = true },
                                 modifier = Modifier.safeDrawingPadding(),
                             )
+                            val filing = container.filing
+                            val training by filing.training.collectAsStateWithLifecycle()
+                            val trained by filing.trainedFolders.collectAsStateWithLifecycle(emptyList())
+                            val learned by filing.exampleCount.collectAsStateWithLifecycle(0)
+                            val filingEnabled by container.settings.filingSuggestions.collectAsStateWithLifecycle()
                             if (showSettings) {
                                 SettingsDialog(
                                     themeMode = themeMode,
                                     onThemeModeChange = container.settings::setThemeMode,
+                                    filing = FilingSettings(
+                                        enabled = filingEnabled,
+                                        onEnabledChange = container.settings::setFilingSuggestions,
+                                        status = filingStatus(training, learned, trained.size),
+                                        onTrain = {
+                                            showSettings = false
+                                            showTraining = true
+                                        },
+                                    ),
                                     accountEmail = signedIn.email,
                                     onSignOut = {
                                         showSettings = false
@@ -100,6 +120,20 @@ class MainActivity : ComponentActivity() {
                                     },
                                     versionName = versionName(),
                                     onDismiss = { showSettings = false },
+                                )
+                            }
+                            if (showTraining) {
+                                val folders by container.repository.folders.collectAsStateWithLifecycle(emptyList())
+                                TrainingDialog(
+                                    folders = folders,
+                                    trainedNames = trained.map { it.fullName }.toSet(),
+                                    state = training,
+                                    onStart = filing::train,
+                                    onStop = filing::cancelTraining,
+                                    onClose = {
+                                        showTraining = false
+                                        filing.acknowledgeTraining()
+                                    },
                                 )
                             }
                         }
@@ -142,6 +176,14 @@ class MainActivity : ComponentActivity() {
             ),
         )
         super.onProvideKeyboardShortcuts(data, menu, deviceId)
+    }
+
+    private fun filingStatus(state: TrainingState, learned: Int, folders: Int): String = when {
+        state is TrainingState.Running -> "Training: folder ${state.index} of ${state.total}…"
+        learned == 0 -> "Not trained yet. Train it on your folders to get suggestions right away."
+        folders == 0 -> "Learning from the mail you file."
+        else -> "Learned from ${NumberFormat.getIntegerInstance().format(learned)} emails in " +
+            (if (folders == 1) "1 folder" else "$folders folders") + ", and keeps learning as you file."
     }
 
     private fun versionName(): String =
