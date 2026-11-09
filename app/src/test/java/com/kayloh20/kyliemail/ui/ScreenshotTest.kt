@@ -11,6 +11,10 @@ import com.kayloh20.kyliemail.ui.settings.SendingSettings
 import com.kayloh20.kyliemail.ui.mail.WritingActions
 import com.kayloh20.kyliemail.ui.mail.FileActions
 import com.kayloh20.kyliemail.ui.mail.TouchActions
+import com.kayloh20.kyliemail.ui.mail.RemoteImagesBanner
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxWidth
 import com.kayloh20.kyliemail.ui.settings.SwipeSettings
 import com.kayloh20.kyliemail.data.settings.SwipeAction
 import androidx.compose.runtime.Composable
@@ -208,6 +212,55 @@ class ScreenshotTest {
     fun phonePickingMessages() = captureRoboImage("build/screenshots/phone-selecting.png") {
         KylieMailTheme(darkTheme = true) {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) { phoneList(true, Modifier.fillMaxSize()) }
+        }
+    }
+
+    /** Reading on a phone: one toolbar row, a collapsed header, and the slim images banner. */
+    @Test
+    @Config(qualifiers = "w411dp-h891dp-xxhdpi")
+    fun phoneReading() {
+        val store = InlineImageStore(Files.createTempDirectory("inline").toFile())
+        val newsletter = open.copy(
+            subject = "Thirst for Adventure: November 11 @ 7:00PM",
+            fromName = "Thirst for Adventure - The Goblin Gazette",
+            fromAddress = "thirst-for-adventure-comedy@mail.beehiiv.com",
+            toList = "kylie@icloud.com",
+            isFlagged = false,
+        )
+        captureRoboImage("build/screenshots/phone-reading.png") {
+            KylieMailTheme(darkTheme = true) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    Column(Modifier.fillMaxSize()) {
+                        MessageDetailPane(
+                            message = newsletter,
+                            selectionCount = 1,
+                            bodyError = null,
+                            remoteImagesAllowed = false,
+                            inlineImages = store,
+                            onRetryBody = {},
+                            onLoadRemoteImages = {},
+                            onTrustSender = {},
+                            canArchive = true,
+                            onArchive = {},
+                            onDelete = {},
+                            onToggleRead = {},
+                            onToggleFlag = {},
+                            onMove = {},
+                            onClearSelection = {},
+                            suggestions = listOf(FolderSuggestion(11, "Events", "Events", 0.8, "You've filed 9 emails from this sender here")),
+                            filingTrained = true,
+                            onFile = {},
+                            onTrainFiling = {},
+                            writing = WritingActions(false, {}, {}, {}, {}),
+                            files = FileActions(emptyList(), emptySet(), {}, {}, {}),
+                            onBack = {},
+                            modifier = Modifier.fillMaxWidth().height(330.dp),
+                        )
+                        // The banner normally appears once the email tries to load a remote image.
+                        RemoteImagesBanner("thirst@mail.beehiiv.com", compact = true, edge = 16.dp, onLoad = {}, onTrust = {})
+                    }
+                }
+            }
         }
     }
 

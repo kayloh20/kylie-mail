@@ -39,12 +39,13 @@ fun SuggestionBar(
     onFile: (Long) -> Unit,
     onTrain: () -> Unit,
     modifier: Modifier = Modifier,
+    start: androidx.compose.ui.unit.Dp = 28.dp,
 ) {
     val confident = suggestions.filter { it.confident }.take(2)
     if (confident.isEmpty() && trained) return
 
     FlowRow(
-        modifier = modifier.padding(start = 28.dp, end = 16.dp, bottom = 12.dp),
+        modifier = modifier.padding(start = start, end = 16.dp, bottom = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.Center,
         itemVerticalAlignment = Alignment.CenterVertically,

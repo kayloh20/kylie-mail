@@ -50,9 +50,10 @@ fun AttachmentStrip(
     onOpen: (AttachmentEntity) -> Unit,
     onSave: (AttachmentEntity) -> Unit,
     modifier: Modifier = Modifier,
+    start: androidx.compose.ui.unit.Dp = 28.dp,
 ) {
     if (attachments.isEmpty()) return
-    Column(modifier.padding(start = 28.dp, end = 16.dp, bottom = 12.dp)) {
+    Column(modifier.padding(start = start, end = 16.dp, bottom = 12.dp)) {
         Text(
             if (attachments.size == 1) "1 attachment" else "${attachments.size} attachments",
             style = MaterialTheme.typography.labelMedium,
