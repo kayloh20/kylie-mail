@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -41,6 +42,26 @@ class MailViewModel(private val repository: MailRepository) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val syncState: StateFlow<SyncState> = repository.syncState
+
+    val inlineImages = repository.inlineImages
+
+    private val _remoteAllowedFor = MutableStateFlow<Set<Long>>(emptySet())
+
+    /** Whether the open message may load remote images: allowed once, or its sender is trusted. */
+    val remoteImagesAllowed: StateFlow<Boolean> =
+        combine(selectedMessage, _remoteAllowedFor, repository.trustedImageSenders) { message, allowed, trusted ->
+            message != null && (message.id in allowed || message.fromAddress.lowercase() in trusted)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun loadRemoteImages() {
+        val id = _selectedMessageId.value ?: return
+        _remoteAllowedFor.value = _remoteAllowedFor.value + id
+    }
+
+    fun trustSender() {
+        val address = selectedMessage.value?.fromAddress ?: return
+        repository.trustImageSender(address)
+    }
 
     private val _bodyError = MutableStateFlow<String?>(null)
     val bodyError: StateFlow<String?> = _bodyError.asStateFlow()

@@ -9,6 +9,7 @@ coreKtx = "1.17.0"
 lifecycle = "2.9.4"
 room = "2.8.4"
 work = "2.11.0"
+webkit = "1.14.0"
 coroutines = "1.10.2"
 androidMail = "1.6.8"
 junit = "4.13.2"
@@ -27,6 +28,7 @@ compose-material-icons = { module = "androidx.compose.material:material-icons-ex
 room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+webkit = { module = "androidx.webkit:webkit", version.ref = "webkit" }
 work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
 coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 android-mail = { module = "com.sun.mail:android-mail", version.ref = "androidMail" }

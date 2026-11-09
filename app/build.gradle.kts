@@ -98,6 +98,7 @@ dependencies {
     ksp(libs.room.compiler)
 
     implementation(libs.work.runtime)
+    implementation(libs.webkit)
     implementation(libs.coroutines.android)
 
     implementation(libs.android.mail)

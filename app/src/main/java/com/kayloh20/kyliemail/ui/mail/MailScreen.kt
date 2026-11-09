@@ -45,6 +45,7 @@ fun MailScreen(viewModel: MailViewModel, modifier: Modifier = Modifier) {
     val selectedMessage by viewModel.selectedMessage.collectAsStateWithLifecycle()
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
     val bodyError by viewModel.bodyError.collectAsStateWithLifecycle()
+    val remoteImagesAllowed by viewModel.remoteImagesAllowed.collectAsStateWithLifecycle()
 
     val folderTitle = folders.firstOrNull { it.id == selectedFolderId }?.displayName ?: "Mail"
     var listWidth by rememberSaveable { mutableFloatStateOf(380f) }
@@ -97,7 +98,11 @@ fun MailScreen(viewModel: MailViewModel, modifier: Modifier = Modifier) {
     fun detailPane(showBack: Boolean, paneModifier: Modifier) = MessageDetailPane(
         message = selectedMessage,
         bodyError = bodyError,
+        remoteImagesAllowed = remoteImagesAllowed,
+        inlineImages = viewModel.inlineImages,
         onRetryBody = viewModel::retryBody,
+        onLoadRemoteImages = viewModel::loadRemoteImages,
+        onTrustSender = viewModel::trustSender,
         onBack = if (showBack) ({ viewModel.selectMessage(null) }) else null,
         modifier = paneModifier,
     )

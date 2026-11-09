@@ -48,6 +48,9 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE id = :id")
     suspend fun getById(id: Long): MessageEntity?
 
+    @Query("SELECT id FROM messages")
+    suspend fun allIds(): List<Long>
+
     @Query("SELECT uid, isSeen, isFlagged, isAnswered FROM messages WHERE folderId = :folderId")
     suspend fun localFlags(folderId: Long): List<LocalFlags>
 

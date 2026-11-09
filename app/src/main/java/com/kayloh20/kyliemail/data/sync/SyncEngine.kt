@@ -8,6 +8,7 @@ import com.kayloh20.kyliemail.data.db.MailDatabase
 import com.kayloh20.kyliemail.data.db.MessageEntity
 import com.kayloh20.kyliemail.data.mail.FolderRole
 import com.kayloh20.kyliemail.data.mail.ImapConnector
+import com.kayloh20.kyliemail.data.mail.InlineImageStore
 import com.kayloh20.kyliemail.data.mail.extractBody
 import com.kayloh20.kyliemail.data.mail.makePreview
 import com.sun.mail.imap.IMAPFolder
@@ -47,6 +48,7 @@ class SyncEngine(
     private val db: MailDatabase,
     private val credentials: CredentialStore,
     private val connector: ImapConnector,
+    private val inlineImages: InlineImageStore,
 ) {
     private val folderDao = db.folders()
     private val messageDao = db.messages()
@@ -62,12 +64,19 @@ class SyncEngine(
     val state: StateFlow<SyncState> = _state.asStateFlow()
 
     /** Full refresh: the folder list and unread counts, the inbox, and [focusFolderId] if given. */
-    suspend fun sync(focusFolderId: Long? = null): SyncOutcome = syncHeaders { store ->
-        syncFolderList(store)
-        listOfNotNull(
-            folderDao.getByRole(FolderRole.INBOX),
-            focusFolderId?.let { folderDao.getById(it) },
-        ).distinctBy { it.id }
+    suspend fun sync(focusFolderId: Long? = null): SyncOutcome {
+        val outcome = syncHeaders { store ->
+            syncFolderList(store)
+            listOfNotNull(
+                folderDao.getByRole(FolderRole.INBOX),
+                focusFolderId?.let { folderDao.getById(it) },
+            ).distinctBy { it.id }
+        }
+        if (outcome == SyncOutcome.Success) {
+            // Remove images saved for messages that have since been deleted.
+            withContext(Dispatchers.IO) { runCatching { inlineImages.retainOnly(messageDao.allIds().toSet()) } }
+        }
+        return outcome
     }
 
     /** Quick refresh of a single folder, used when it is opened. */
@@ -299,6 +308,7 @@ class SyncEngine(
         for (message in messages) {
             val serverMessage = runCatching { remote.getMessageByUID(message.uid) }.getOrNull() ?: continue
             val body = runCatching { extractBody(serverMessage) }.getOrNull() ?: continue
+            runCatching { inlineImages.save(message.id, body.inlineParts) }
             messageDao.setBody(message.id, body.text, body.html, makePreview(body.text, body.html))
         }
     }

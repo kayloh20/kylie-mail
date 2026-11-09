@@ -6,6 +6,7 @@ import com.kayloh20.kyliemail.data.db.FolderEntity
 import com.kayloh20.kyliemail.data.db.MailDatabase
 import com.kayloh20.kyliemail.data.db.MessageEntity
 import com.kayloh20.kyliemail.data.db.MessageSummary
+import com.kayloh20.kyliemail.data.mail.InlineImageStore
 import com.kayloh20.kyliemail.data.sync.SyncEngine
 import com.kayloh20.kyliemail.data.sync.SyncOutcome
 import com.kayloh20.kyliemail.data.sync.SyncScheduler
@@ -20,7 +21,14 @@ class MailRepository(
     private val credentials: CredentialStore,
     private val syncEngine: SyncEngine,
     private val scheduler: SyncScheduler,
+    val inlineImages: InlineImageStore,
+    private val imageTrust: ImageTrust,
 ) {
+    /** Senders whose remote images load automatically. */
+    val trustedImageSenders: StateFlow<Set<String>> = imageTrust.senders
+
+    fun trustImageSender(address: String) = imageTrust.trust(address)
+
     val folders: Flow<List<FolderEntity>> = db.folders().observeAll()
     val syncState: StateFlow<SyncState> = syncEngine.state
 
@@ -44,6 +52,8 @@ class MailRepository(
         syncEngine.exclusive {
             withContext(Dispatchers.IO) { db.clearAllTables() }
             credentials.clear()
+            inlineImages.clear()
+            imageTrust.clear()
         }
         syncEngine.disconnect()
     }
