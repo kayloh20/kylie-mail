@@ -325,6 +325,10 @@ fun MailScreen(
             ModalNavigationDrawer(
                 drawerState = drawerState,
                 drawerContent = { ModalDrawerSheet { folderPane(inDrawer = true) } },
+                // Open only from the menu button: a sideways drag while scrolling an email, swiping a
+                // message, or using Android's back gesture shouldn't pull the folders in. Once open,
+                // swiping it closed still works.
+                gesturesEnabled = drawerState.isOpen,
             ) {
                 if (medium) {
                     Row(Modifier.fillMaxSize()) {
