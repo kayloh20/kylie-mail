@@ -9,7 +9,7 @@ class ImapConnector(private val server: ServerConfig = ServerConfig.ICLOUD) {
 
     fun connect(username: String, password: String, readTimeoutMs: Long = 60_000): IMAPStore {
         val session = Session.getInstance(properties(readTimeoutMs))
-        val store = session.getStore("imaps") as IMAPStore
+        val store = session.getStore(protocol) as IMAPStore
         store.connect(server.imapHost, server.imapPort, username, password)
         return store
     }
@@ -31,20 +31,25 @@ class ImapConnector(private val server: ServerConfig = ServerConfig.ICLOUD) {
         throw lastError ?: AuthenticationFailedException()
     }
 
+    private val protocol = if (server.tls) "imaps" else "imap"
+
     private fun properties(readTimeoutMs: Long) = Properties().apply {
-        put("mail.store.protocol", "imaps")
-        put("mail.imaps.host", server.imapHost)
-        put("mail.imaps.port", server.imapPort.toString())
-        put("mail.imaps.ssl.enable", "true")
-        put("mail.imaps.ssl.checkserveridentity", "true")
-        put("mail.imaps.connectiontimeout", "20000")
-        put("mail.imaps.timeout", readTimeoutMs.toString())
-        put("mail.imaps.writetimeout", "20000")
+        val p = "mail.$protocol"
+        put("mail.store.protocol", protocol)
+        put("$p.host", server.imapHost)
+        put("$p.port", server.imapPort.toString())
+        if (server.tls) {
+            put("$p.ssl.enable", "true")
+            put("$p.ssl.checkserveridentity", "true")
+        }
+        put("$p.connectiontimeout", "20000")
+        put("$p.timeout", readTimeoutMs.toString())
+        put("$p.writetimeout", "20000")
         // Keep a couple of logged-in connections around so opening folders doesn't log in again each time.
-        put("mail.imaps.connectionpoolsize", "2")
-        put("mail.imaps.connectionpooltimeout", "300000")
+        put("$p.connectionpoolsize", "2")
+        put("$p.connectionpooltimeout", "300000")
         // Reading a message must never mark it read on the server by itself.
-        put("mail.imaps.peek", "true")
+        put("$p.peek", "true")
     }
 
     companion object {

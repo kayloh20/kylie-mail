@@ -63,6 +63,8 @@ data class MessageEntity(
     val bodyText: String? = null,
     val bodyHtml: String? = null,
     val bodyLoaded: Boolean = false,
+    /** Its text was downloaded for search ("keep all mail"), even if the full body wasn't. */
+    @ColumnInfo(defaultValue = "0") val textIndexed: Boolean = false,
 )
 
 /** The columns the message list needs, without the bodies. */

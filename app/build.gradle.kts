@@ -117,6 +117,8 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.roborazzi)
+    // A real IMAP and SMTP server for tests; it uses the app's own mail library instead of bringing its own.
+    testImplementation(libs.greenmail) { exclude(group = "com.sun.mail") }
     testImplementation(libs.roborazzi.compose)
     testImplementation(platform(libs.compose.bom))
     testImplementation(libs.compose.ui.test.junit4)

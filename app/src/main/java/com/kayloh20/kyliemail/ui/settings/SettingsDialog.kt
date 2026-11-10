@@ -36,6 +36,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.kayloh20.kyliemail.data.settings.ThemeMode
 import com.kayloh20.kyliemail.data.settings.SwipeAction
+import com.kayloh20.kyliemail.data.offline.KeepAllProgress
+import com.kayloh20.kyliemail.data.mail.BodyParser
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material.icons.outlined.Check
@@ -54,6 +58,16 @@ data class SendingSettings(
     val onNameChange: (String) -> Unit,
     val signature: String,
     val onSignatureChange: (String) -> Unit,
+)
+
+/** "Keep all mail on this device": the switches and how far it has got. */
+data class KeepAllSettings(
+    val enabled: Boolean,
+    val onEnabledChange: (Boolean) -> Unit,
+    val wifiOnly: Boolean,
+    val onWifiOnlyChange: (Boolean) -> Unit,
+    val progress: KeepAllProgress?,
+    val onRemove: () -> Unit,
 )
 
 /** What swiping a message does on touch screens. */
@@ -79,13 +93,14 @@ fun SettingsDialog(
     filing: FilingSettings,
     sending: SendingSettings,
     swipes: SwipeSettings,
+    keepAll: KeepAllSettings,
     accountEmail: String,
     onSignOut: () -> Unit,
     versionName: String,
     onDismiss: () -> Unit,
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        SettingsContent(themeMode, onThemeModeChange, filing, sending, swipes, accountEmail, onSignOut, versionName, onDismiss)
+        SettingsContent(themeMode, onThemeModeChange, filing, sending, swipes, keepAll, accountEmail, onSignOut, versionName, onDismiss)
     }
 }
 
@@ -96,6 +111,7 @@ fun SettingsContent(
     filing: FilingSettings,
     sending: SendingSettings,
     swipes: SwipeSettings,
+    keepAll: KeepAllSettings,
     accountEmail: String,
     onSignOut: () -> Unit,
     versionName: String,
@@ -182,6 +198,12 @@ fun SettingsContent(
 
             HorizontalDivider(Modifier.padding(horizontal = 24.dp))
 
+            Section("Offline mail") {
+                KeepAllSection(keepAll)
+            }
+
+            HorizontalDivider(Modifier.padding(horizontal = 24.dp))
+
             Section("Smart filing") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -246,6 +268,69 @@ private fun Section(title: String, content: @Composable () -> Unit) {
         content()
     }
 }
+
+@Composable
+private fun KeepAllSection(keepAll: KeepAllSettings) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Keep all mail on this device", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "Downloads the text of every email (not attachments) so search finds everything, even offline. Nothing is marked read.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = keepAll.enabled, onCheckedChange = keepAll.onEnabledChange)
+    }
+    val progress = keepAll.progress
+    if (keepAll.enabled) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Only on Wi-Fi", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            Switch(checked = keepAll.wifiOnly, onCheckedChange = keepAll.onWifiOnlyChange)
+        }
+        if (progress != null && progress.total > 0) {
+            val done = progress.searchable >= progress.total
+            if (!done) {
+                LinearProgressIndicator(
+                    progress = { (progress.searchable.toFloat() / progress.total).coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Text(
+                when {
+                    done -> "All ${count(progress.total)} emails are on this device · ${BodyParser.formatSize(progress.bytesOnDevice)}"
+                    else -> "Searchable: ${count(progress.searchable)} of ${count(progress.total)} emails · " +
+                        BodyParser.formatSize(progress.bytesOnDevice)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (!done) {
+                Text(
+                    when {
+                        progress.running -> "Downloading in the background…"
+                        keepAll.wifiOnly -> "Continues on Wi-Fi when the battery isn't low."
+                        else -> "Continues when there's a connection and the battery isn't low."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = KylieTheme.colors.textMuted,
+                )
+            }
+        }
+    } else if (progress != null) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Mail on this device: ${BodyParser.formatSize(progress.bytesOnDevice)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = keepAll.onRemove) { Text("Free up space") }
+        }
+    }
+}
+
+private fun count(n: Int): String = java.text.NumberFormat.getIntegerInstance().format(n)
 
 @Composable
 private fun SwipeChoice(label: String, value: SwipeAction, onChange: (SwipeAction) -> Unit) {

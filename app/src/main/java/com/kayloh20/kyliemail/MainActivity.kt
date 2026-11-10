@@ -24,6 +24,9 @@ import com.kayloh20.kyliemail.ui.settings.SettingsDialog
 import com.kayloh20.kyliemail.ui.settings.FilingSettings
 import com.kayloh20.kyliemail.ui.settings.SendingSettings
 import com.kayloh20.kyliemail.ui.settings.SwipeSettings
+import com.kayloh20.kyliemail.ui.settings.KeepAllSettings
+import androidx.compose.runtime.remember
+import kotlinx.coroutines.launch
 import com.kayloh20.kyliemail.ui.settings.TrainingDialog
 import com.kayloh20.kyliemail.data.filing.TrainingState
 import java.text.NumberFormat
@@ -77,7 +80,13 @@ class MainActivity : ComponentActivity() {
                     val account by container.credentials.account.collectAsStateWithLifecycle()
                     val signedIn = account
                     LaunchedEffect(signedIn?.email) {
-                        if (signedIn != null) MailPushService.start(this@MainActivity) else MailPushService.stop(this@MainActivity)
+                        if (signedIn != null) {
+                            MailPushService.start(this@MainActivity)
+                        } else {
+                            MailPushService.stop(this@MainActivity)
+                            // A different account must never inherit "keep all mail".
+                            container.keepAllMail.setEnabled(false)
+                        }
                     }
                     if (signedIn == null) {
                         val vm: SignInViewModel = viewModel(factory = factoryOf { SignInViewModel(container) })
@@ -108,6 +117,9 @@ class MainActivity : ComponentActivity() {
                             val signature by container.settings.signature.collectAsStateWithLifecycle()
                             val swipeRight by container.settings.swipeRight.collectAsStateWithLifecycle()
                             val swipeLeft by container.settings.swipeLeft.collectAsStateWithLifecycle()
+                            val keepAllEnabled by container.keepAllMail.enabled.collectAsStateWithLifecycle()
+                            val keepAllWifiOnly by container.keepAllMail.wifiOnly.collectAsStateWithLifecycle()
+                            val keepAllProgress by remember { container.keepAllMail.progress }.collectAsStateWithLifecycle(null)
                             if (showSettings) {
                                 SettingsDialog(
                                     themeMode = themeMode,
@@ -132,6 +144,14 @@ class MainActivity : ComponentActivity() {
                                         onRightChange = container.settings::setSwipeRight,
                                         left = swipeLeft,
                                         onLeftChange = container.settings::setSwipeLeft,
+                                    ),
+                                    keepAll = KeepAllSettings(
+                                        enabled = keepAllEnabled,
+                                        onEnabledChange = container.keepAllMail::setEnabled,
+                                        wifiOnly = keepAllWifiOnly,
+                                        onWifiOnlyChange = container.keepAllMail::setWifiOnly,
+                                        progress = keepAllProgress,
+                                        onRemove = { container.appScope.launch { container.keepAllMail.removeDownloadedMail() } },
                                     ),
                                     accountEmail = signedIn.email,
                                     onSignOut = {

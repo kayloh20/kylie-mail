@@ -21,11 +21,16 @@ data class Account(
     val password: String,
 )
 
+/** Where the signed-in account comes from; tests supply one without the Android Keystore. */
+interface AccountSource {
+    val account: StateFlow<Account?>
+}
+
 /** Keeps the signed-in account, with the password encrypted by a key that never leaves the Android Keystore. */
-class CredentialStore(context: Context) {
+class CredentialStore(context: Context) : AccountSource {
     private val prefs = context.getSharedPreferences("account", Context.MODE_PRIVATE)
     private val _account = MutableStateFlow(load())
-    val account: StateFlow<Account?> = _account.asStateFlow()
+    override val account: StateFlow<Account?> = _account.asStateFlow()
 
     fun save(account: Account) {
         // Written synchronously so the account is on disk before the UI moves on.

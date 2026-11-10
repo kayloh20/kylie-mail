@@ -13,6 +13,7 @@ class KylieMailApp : Application() {
         container.settings.applyThemeMode()
         if (container.credentials.account.value != null) {
             container.syncScheduler.schedulePeriodic()
+            if (container.keepAllMail.enabled.value) container.keepAllMail.schedule()
         }
     }
 }

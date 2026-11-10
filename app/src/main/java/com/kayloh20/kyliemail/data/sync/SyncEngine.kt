@@ -2,7 +2,7 @@ package com.kayloh20.kyliemail.data.sync
 
 import androidx.room.withTransaction
 import com.kayloh20.kyliemail.data.account.Account
-import com.kayloh20.kyliemail.data.account.CredentialStore
+import com.kayloh20.kyliemail.data.account.AccountSource
 import com.kayloh20.kyliemail.data.db.FolderEntity
 import com.kayloh20.kyliemail.data.db.MailDatabase
 import com.kayloh20.kyliemail.data.db.MessageEntity
@@ -62,7 +62,7 @@ data class SyncState(
 
 class SyncEngine(
     private val db: MailDatabase,
-    private val credentials: CredentialStore,
+    private val credentials: AccountSource,
     private val connector: ImapConnector,
     private val inlineImages: InlineImageStore,
 ) {
@@ -267,6 +267,119 @@ class SyncEngine(
             messageDao.insertAll(byUid.mapNotNull { (uid, m) -> runCatching { m.toEntity(folder.id, uid) }.getOrNull() })
             found += byUid.keys.chunked(500).flatMap { messageDao.idsForUids(folder.id, it) }
             return null
+        } finally {
+            runCatching { remote.close(false) }
+        }
+    }
+
+    /**
+     * One pass of "keep all mail on this device", until [deadline]: first every folder's older
+     * headers, then the text of every email, newest first. Returns true while work remains. It can
+     * stop at any point and pick up where it left off, because progress lives in the database.
+     */
+    suspend fun keepAllPass(
+        folders: List<FolderEntity>,
+        deadline: Long,
+        reconcileDue: (FolderEntity) -> Boolean,
+        onReconciled: (FolderEntity) -> Unit,
+    ): Boolean = useConnection { store ->
+        fun timeUp() = System.currentTimeMillis() >= deadline
+        for (folder in folders) {
+            if (timeUp()) return@useConnection true
+            var local = folderDao.getById(folder.id) ?: continue
+            if (local.highestUid == 0L) {
+                syncMessages(store, local)
+                local = folderDao.getById(folder.id) ?: continue
+            }
+            if (reconcileDue(local)) {
+                removeVanished(store, local)
+                onReconciled(local)
+            }
+            while (!timeUp() && backfillHeaders(store, local, HEADER_BATCH) > 0) Unit
+        }
+        for (folder in folders) {
+            while (true) {
+                if (timeUp()) return@useConnection true
+                val batch = messageDao.needingText(folder.id, TEXT_BATCH)
+                if (batch.isEmpty()) break
+                downloadSearchText(store, folder, batch)
+            }
+        }
+        false
+    }
+
+    /** Adds up to [batch] headers older than the oldest cached one. Returns how many were added. */
+    private suspend fun backfillHeaders(store: IMAPStore, folder: FolderEntity, batch: Int): Int {
+        val oldest = messageDao.oldestUid(folder.id) ?: return 0
+        val remote = store.getFolder(folder.fullName) as IMAPFolder
+        if (!remote.exists()) return 0
+        remote.open(Folder.READ_ONLY)
+        try {
+            if (remote.uidValidity != folder.uidValidity) return 0
+            // Find where the oldest cached message sits, then read the batch just before it by position.
+            val position = remote.getMessageByUID(oldest)?.messageNumber
+            val older: Array<Message> = when {
+                position == null -> remote.getMessagesByUID(1, oldest - 1).takeLast(batch).toTypedArray()
+                position <= 1 -> emptyArray()
+                else -> remote.getMessages(maxOf(1, position - batch), position - 1)
+            }
+            if (older.isEmpty()) return 0
+            remote.fetch(older, headerProfile())
+            val entities = older.mapNotNull { m ->
+                runCatching { remote.getUID(m).takeIf { it < oldest }?.let { uid -> m.toEntity(folder.id, uid) } }.getOrNull()
+            }
+            messageDao.insertAll(entities)
+            return entities.size
+        } finally {
+            runCatching { remote.close(false) }
+        }
+    }
+
+    /** Forgets cached messages deleted on the server, across the whole folder rather than the newest ones. */
+    private suspend fun removeVanished(store: IMAPStore, folder: FolderEntity) {
+        val remote = store.getFolder(folder.fullName) as IMAPFolder
+        if (!remote.exists()) return
+        remote.open(Folder.READ_ONLY)
+        try {
+            if (remote.uidValidity != folder.uidValidity) return
+            val all = remote.messages
+            remote.fetch(all, FetchProfile().apply { add(UIDFolder.FetchProfileItem.UID) })
+            val onServer = all.mapNotNull { runCatching { remote.getUID(it) }.getOrNull() }.toHashSet()
+            val gone = messageDao.allUids(folder.id).filter { it !in onServer }
+            gone.chunked(500).forEach { messageDao.deleteUids(folder.id, it) }
+        } finally {
+            runCatching { remote.close(false) }
+        }
+    }
+
+    /** Downloads just the text of [messages] for search: never attachments, and never marks them read. */
+    private suspend fun downloadSearchText(store: IMAPStore, folder: FolderEntity, messages: List<MessageEntity>) {
+        val remote = store.getFolder(folder.fullName) as IMAPFolder
+        if (!remote.exists()) return
+        remote.open(Folder.READ_ONLY)
+        try {
+            val onServer = remote.getMessagesByUID(messages.map { it.uid }.toLongArray())
+            // The structure first, in one request, so only the text parts are fetched afterwards.
+            remote.fetch(
+                onServer.filterNotNull().toTypedArray(),
+                FetchProfile().apply {
+                    add(FetchProfile.Item.CONTENT_INFO)
+                    add(UIDFolder.FetchProfileItem.UID)
+                },
+            )
+            messages.zip(onServer.toList()).forEach { (local, server) ->
+                val text = if (server == null) null else try {
+                    BodyParser.searchText(server)?.take(MAX_SEARCH_TEXT)
+                } catch (e: FolderClosedException) {
+                    throw e
+                } catch (e: MessagingException) {
+                    null
+                } catch (e: IOException) {
+                    null
+                }
+                // Marked done even without text (an image-only email, say), so it isn't fetched again.
+                messageDao.setSearchText(local.id, text, makePreview(text, null))
+            }
         } finally {
             runCatching { remote.close(false) }
         }
@@ -648,6 +761,9 @@ class SyncEngine(
 
         /** How many of a folder's newest cached messages have their flags and deletions checked each sync. */
         const val FLAG_WINDOW = 1000
+        private const val HEADER_BATCH = 500
+        private const val TEXT_BATCH = 50
+        private const val MAX_SEARCH_TEXT = 100_000
     }
 }
 

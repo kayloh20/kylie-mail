@@ -85,6 +85,44 @@ interface MessageDao {
     @Query("SELECT id FROM messages")
     suspend fun allIds(): List<Long>
 
+    // Keeping all mail on the device
+
+    @Query("SELECT MIN(uid) FROM messages WHERE folderId = :folderId")
+    suspend fun oldestUid(folderId: Long): Long?
+
+    @Query("SELECT uid FROM messages WHERE folderId = :folderId")
+    suspend fun allUids(folderId: Long): List<Long>
+
+    /** Newest first, so recent mail becomes searchable soonest. */
+    @Query("SELECT * FROM messages WHERE folderId = :folderId AND bodyLoaded = 0 AND textIndexed = 0 ORDER BY uid DESC LIMIT :limit")
+    suspend fun needingText(folderId: Long, limit: Int): List<MessageEntity>
+
+    /** Stores text for search without marking the full body as downloaded. */
+    @Query(
+        """
+        UPDATE messages SET bodyText = :text, textIndexed = 1,
+            preview = CASE WHEN preview = '' THEN :preview ELSE preview END
+        WHERE id = :id AND bodyLoaded = 0
+        """,
+    )
+    suspend fun setSearchText(id: Long, text: String?, preview: String)
+
+    @Query("SELECT COUNT(*) FROM messages WHERE folderId IN (:folderIds) AND (bodyLoaded = 1 OR textIndexed = 1)")
+    fun observeSearchableCount(folderIds: List<Long>): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM messages WHERE folderId IN (:folderIds) AND bodyLoaded = 0 AND textIndexed = 0")
+    suspend fun pendingTextCount(folderIds: List<Long>): Int
+
+    /** Drops everything but a folder's newest [keep] messages, undoing "keep all mail". */
+    @Query(
+        """
+        DELETE FROM messages WHERE folderId = :folderId AND uid < (
+            SELECT uid FROM messages WHERE folderId = :folderId ORDER BY uid DESC LIMIT 1 OFFSET :keep
+        )
+        """,
+    )
+    suspend fun trimFolder(folderId: Long, keep: Int)
+
     /** The newest cached messages' flags. Older ones, such as search results, aren't re-checked every sync. */
     @Query("SELECT uid, isSeen, isFlagged, isAnswered FROM messages WHERE folderId = :folderId ORDER BY uid DESC LIMIT :limit")
     suspend fun localFlags(folderId: Long, limit: Int): List<LocalFlags>

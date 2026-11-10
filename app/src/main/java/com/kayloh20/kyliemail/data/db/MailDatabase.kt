@@ -11,11 +11,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [FolderEntity::class, MessageEntity::class, PendingAction::class, FilingExampleEntity::class, TrainedFolder::class, DraftEntity::class, AttachmentEntity::class, DraftAttachmentEntity::class, MessageSearchEntity::class],
-    version = 8,
+    version = 9,
     exportSchema = true,
     autoMigrations = [AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6),
         AutoMigration(from = 6, to = 7, spec = MailDatabase.ReloadBodies::class),
         AutoMigration(from = 7, to = 8, spec = MailDatabase.BuildSearchIndex::class),
+        AutoMigration(from = 8, to = 9),
     ],
 )
 abstract class MailDatabase : RoomDatabase() {

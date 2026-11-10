@@ -75,6 +75,22 @@ object BodyParser {
         return ParsedBody(text, html, rich.images, rich.attachments)
     }
 
+    /**
+     * Just the readable text, for search. Only text parts are read, so on the server this downloads
+     * the text and skips attachments and images entirely.
+     */
+    fun searchText(root: Part): String? {
+        val plain = Walk(preferHtml = false).also { walk(root, "", it, inBody = true, collectFiles = false) }
+        return plain.segments.mapNotNull {
+            when (it) {
+                is Segment.Text -> it.text.trimEnd()
+                is Segment.Html -> htmlToPlainText(it.html).trim()
+                is Segment.Card -> "[${it.attachment.filename}]"
+                is Segment.Image -> null
+            }
+        }.filter { it.isNotBlank() }.joinToString("\n\n").ifBlank { null }
+    }
+
     private fun walk(part: Part, path: String, w: Walk, inBody: Boolean, collectFiles: Boolean = true) {
         val type = mimeType(part)
         val disposition = runCatching { part.disposition }.getOrNull()?.lowercase(Locale.ROOT)
