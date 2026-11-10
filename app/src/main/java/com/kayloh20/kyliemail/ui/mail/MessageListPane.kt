@@ -19,6 +19,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.graphics.Color
 import com.kayloh20.kyliemail.data.settings.SwipeAction
 import kotlinx.coroutines.launch
@@ -272,15 +273,40 @@ private fun SwipeableRow(message: MessageSummary, touch: TouchActions, content: 
     }
     val scope = rememberCoroutineScope()
     val state = rememberSwipeToDismissBoxState()
+    // Material re-runs onDismiss whenever the callback changes, and acting on the message (marking it
+    // read, say) recomposes the row with a new one. So the callback must stay the same object, read the
+    // latest values through these, and act only once per swipe.
+    val currentMessage by rememberUpdatedState(message)
+    val currentTouch by rememberUpdatedState(touch)
+    var acted by remember { mutableStateOf(false) }
+    // The label shown while the row springs back, fixed at the moment of the swipe so "Read" doesn't
+    // turn into "Unread" halfway through.
+    var frozenLook by remember { mutableStateOf<Triple<Color, ImageVector, String>?>(null) }
+    val looks = SwipeLooks(swipeLook(touch.swipeRight, message), swipeLook(touch.swipeLeft, message))
+    val currentLooks by rememberUpdatedState(looks)
+    LaunchedEffect(state.settledValue) {
+        if (state.settledValue == SwipeToDismissBoxValue.Settled) {
+            acted = false
+            frozenLook = null
+        }
+    }
+    val onDismiss: (SwipeToDismissBoxValue) -> Unit = remember(state) {
+        { direction ->
+            if (!acted) {
+                acted = true
+                val right = direction == SwipeToDismissBoxValue.StartToEnd
+                frozenLook = if (right) currentLooks.right else currentLooks.left
+                val action = if (right) currentTouch.swipeRight else currentTouch.swipeLeft
+                currentTouch.onSwipe(currentMessage.id, action)
+                scope.launch { state.reset() }
+            }
+        }
+    }
     SwipeToDismissBox(
         state = state,
         enableDismissFromStartToEnd = touch.swipeRight != SwipeAction.NONE,
         enableDismissFromEndToStart = touch.swipeLeft != SwipeAction.NONE,
-        onDismiss = { direction ->
-            val action = if (direction == SwipeToDismissBoxValue.StartToEnd) touch.swipeRight else touch.swipeLeft
-            touch.onSwipe(message.id, action)
-            scope.launch { state.reset() }
-        },
+        onDismiss = onDismiss,
         backgroundContent = {
             val direction = state.dismissDirection
             val action = when (direction) {
@@ -289,7 +315,7 @@ private fun SwipeableRow(message: MessageSummary, touch: TouchActions, content: 
                 SwipeToDismissBoxValue.Settled -> SwipeAction.NONE
             }
             if (action == SwipeAction.NONE) return@SwipeToDismissBox
-            val (color, icon, label) = swipeLook(action, message)
+            val (color, icon, label) = frozenLook ?: swipeLook(action, message)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = if (direction == SwipeToDismissBoxValue.StartToEnd) Arrangement.Start else Arrangement.End,
@@ -304,6 +330,8 @@ private fun SwipeableRow(message: MessageSummary, touch: TouchActions, content: 
         content()
     }
 }
+
+private class SwipeLooks(val right: Triple<Color, ImageVector, String>, val left: Triple<Color, ImageVector, String>)
 
 @Composable
 private fun swipeLook(action: SwipeAction, message: MessageSummary): Triple<Color, ImageVector, String> = when (action) {

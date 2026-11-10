@@ -71,7 +71,7 @@ class MailPushService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        showStatus(Status.CONNECTING)
+        showOngoing()
         if (container.credentials.account.value == null) {
             stopSelf()
             return START_NOT_STICKY
@@ -115,7 +115,6 @@ class MailPushService : Service() {
                 closeIdleStore()
             }
             if (!currentCoroutineContext().isActive) break
-            showStatus(Status.RECONNECTING)
             withTimeoutOrNull(backoff) { wake.receive() }
             backoff = (backoff * 2).coerceAtMost(MAX_BACKOFF_MS)
             if (backoff > INITIAL_BACKOFF_MS && isOnline()) backoff = backoff.coerceAtMost(ONLINE_MAX_BACKOFF_MS)
@@ -148,7 +147,6 @@ class MailPushService : Service() {
             }
         }
 
-        showStatus(Status.CONNECTED)
         try {
             while (currentCoroutineContext().isActive && inbox.isOpen) {
                 inbox.idle(true)
@@ -170,13 +168,12 @@ class MailPushService : Service() {
         return manager.activeNetwork != null
     }
 
-    private enum class Status(val text: String) {
-        CONNECTING("Connecting to iCloud…"),
-        CONNECTED("Connected. New mail arrives instantly."),
-        RECONNECTING("Reconnecting to iCloud…"),
-    }
-
-    private fun showStatus(status: Status) {
+    /**
+     * The notification Android requires while the connection is kept open. It's posted once and never
+     * changes (status updates made it pop and flicker), and its Hide button goes straight to the
+     * setting that hides it, which leaves the connection working.
+     */
+    private fun showOngoing() {
         val open = PendingIntent.getActivity(
             this,
             0,
@@ -186,7 +183,8 @@ class MailPushService : Service() {
         val notification = NotificationCompat.Builder(this, MailNotifier.CHANNEL_CONNECTION)
             .setSmallIcon(R.drawable.ic_stat_mail)
             .setContentTitle("Kylie Mail")
-            .setContentText(status.text)
+            .setContentText("Watching for new mail")
+            .addAction(0, "Hide", hideIntent())
             .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)
@@ -205,7 +203,21 @@ class MailPushService : Service() {
         }
     }
 
+    private fun hideIntent(): PendingIntent = PendingIntent.getActivity(
+        this,
+        1,
+        connectionNotificationSettings(this),
+        PendingIntent.FLAG_IMMUTABLE,
+    )
+
     companion object {
+        /** Android's settings page for just the "Connection status" notification. */
+        fun connectionNotificationSettings(context: Context): Intent =
+            Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, MailNotifier.CHANNEL_CONNECTION)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
         private const val INITIAL_BACKOFF_MS = 5_000L
         private const val MAX_BACKOFF_MS = 15 * 60_000L
         private const val ONLINE_MAX_BACKOFF_MS = 5 * 60_000L
@@ -215,6 +227,12 @@ class MailPushService : Service() {
         private const val IDLE_READ_TIMEOUT_MS = 25 * 60_000L
 
         fun start(context: Context) {
+            // Turned off on this device: the 15-minute check still delivers notifications.
+            val settings = (context.applicationContext as KylieMailApp).container.settings
+            if (!settings.instantNotifications.value) {
+                stop(context)
+                return
+            }
             try {
                 ContextCompat.startForegroundService(context, Intent(context, MailPushService::class.java))
             } catch (e: IllegalStateException) {

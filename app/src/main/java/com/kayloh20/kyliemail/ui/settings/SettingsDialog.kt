@@ -60,6 +60,13 @@ data class SendingSettings(
     val onSignatureChange: (String) -> Unit,
 )
 
+/** Instant notifications and the ongoing notification they need. */
+data class NotificationSettings(
+    val instant: Boolean,
+    val onInstantChange: (Boolean) -> Unit,
+    val onHideOngoing: () -> Unit,
+)
+
 /** "Keep all mail on this device": the switches and how far it has got. */
 data class KeepAllSettings(
     val enabled: Boolean,
@@ -94,13 +101,14 @@ fun SettingsDialog(
     sending: SendingSettings,
     swipes: SwipeSettings,
     keepAll: KeepAllSettings,
+    notifications: NotificationSettings,
     accountEmail: String,
     onSignOut: () -> Unit,
     versionName: String,
     onDismiss: () -> Unit,
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        SettingsContent(themeMode, onThemeModeChange, filing, sending, swipes, keepAll, accountEmail, onSignOut, versionName, onDismiss)
+        SettingsContent(themeMode, onThemeModeChange, filing, sending, swipes, keepAll, notifications, accountEmail, onSignOut, versionName, onDismiss)
     }
 }
 
@@ -112,6 +120,7 @@ fun SettingsContent(
     sending: SendingSettings,
     swipes: SwipeSettings,
     keepAll: KeepAllSettings,
+    notifications: NotificationSettings,
     accountEmail: String,
     onSignOut: () -> Unit,
     versionName: String,
@@ -155,6 +164,37 @@ fun SettingsContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+
+            HorizontalDivider(Modifier.padding(horizontal = 24.dp))
+
+            Section("Notifications") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Instant notifications", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            if (notifications.instant) {
+                                "New mail is announced within seconds. Android shows a small ongoing notification while this is on."
+                            } else {
+                                "New mail is checked every 15 minutes, with no ongoing notification."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = notifications.instant, onCheckedChange = notifications.onInstantChange)
+                }
+                if (notifications.instant) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "You can hide the ongoing notification and keep instant mail.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = KylieTheme.colors.textMuted,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = notifications.onHideOngoing) { Text("Hide it") }
+                    }
+                }
             }
 
             HorizontalDivider(Modifier.padding(horizontal = 24.dp))

@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import com.kayloh20.kyliemail.ui.settings.SwipeSettings
 import com.kayloh20.kyliemail.ui.settings.KeepAllSettings
+import com.kayloh20.kyliemail.ui.settings.NotificationSettings
 import com.kayloh20.kyliemail.data.offline.KeepAllProgress
 import com.kayloh20.kyliemail.data.settings.SwipeAction
 import androidx.compose.runtime.Composable
@@ -139,6 +140,7 @@ class ScreenshotTest {
                         filing = FilingSettings(true, {}, "Learned from 2,340 emails in 9 folders, and keeps learning as you file.", {}),
                         sending = SendingSettings("Kylie", {}, "Kylie\nCheer captain 📣", {}),
                         swipes = SwipeSettings(SwipeAction.READ, {}, SwipeAction.DELETE, {}),
+                        notifications = NotificationSettings(true, {}, {}),
                         keepAll = KeepAllSettings(
                             enabled = true,
                             onEnabledChange = {},

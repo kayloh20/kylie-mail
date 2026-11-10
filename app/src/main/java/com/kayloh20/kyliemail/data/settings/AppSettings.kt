@@ -79,6 +79,16 @@ class AppSettings(private val context: Context) {
         _swipeLeft.value = action
     }
 
+    private val _instantNotifications = MutableStateFlow(prefs.getBoolean(KEY_INSTANT, true))
+
+    /** Keep a connection open so new mail is announced within seconds, rather than every 15 minutes. */
+    val instantNotifications: StateFlow<Boolean> = _instantNotifications.asStateFlow()
+
+    fun setInstantNotifications(on: Boolean) {
+        prefs.edit { putBoolean(KEY_INSTANT, on) }
+        _instantNotifications.value = on
+    }
+
     fun setThemeMode(mode: ThemeMode) {
         prefs.edit { putString(KEY_THEME, mode.name) }
         _themeMode.value = mode
@@ -107,5 +117,6 @@ class AppSettings(private val context: Context) {
         const val KEY_SIGNATURE = "signature"
         const val KEY_SWIPE_RIGHT = "swipe_right"
         const val KEY_SWIPE_LEFT = "swipe_left"
+        const val KEY_INSTANT = "instant_notifications"
     }
 }

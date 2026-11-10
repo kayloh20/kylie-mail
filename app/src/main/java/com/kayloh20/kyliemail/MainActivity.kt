@@ -25,6 +25,7 @@ import com.kayloh20.kyliemail.ui.settings.FilingSettings
 import com.kayloh20.kyliemail.ui.settings.SendingSettings
 import com.kayloh20.kyliemail.ui.settings.SwipeSettings
 import com.kayloh20.kyliemail.ui.settings.KeepAllSettings
+import com.kayloh20.kyliemail.ui.settings.NotificationSettings
 import androidx.compose.runtime.remember
 import kotlinx.coroutines.launch
 import com.kayloh20.kyliemail.ui.settings.TrainingDialog
@@ -118,6 +119,7 @@ class MainActivity : ComponentActivity() {
                             val swipeRight by container.settings.swipeRight.collectAsStateWithLifecycle()
                             val swipeLeft by container.settings.swipeLeft.collectAsStateWithLifecycle()
                             val keepAllEnabled by container.keepAllMail.enabled.collectAsStateWithLifecycle()
+                            val instantNotifications by container.settings.instantNotifications.collectAsStateWithLifecycle()
                             val keepAllWifiOnly by container.keepAllMail.wifiOnly.collectAsStateWithLifecycle()
                             val keepAllProgress by remember { container.keepAllMail.progress }.collectAsStateWithLifecycle(null)
                             if (showSettings) {
@@ -152,6 +154,16 @@ class MainActivity : ComponentActivity() {
                                         onWifiOnlyChange = container.keepAllMail::setWifiOnly,
                                         progress = keepAllProgress,
                                         onRemove = { container.appScope.launch { container.keepAllMail.removeDownloadedMail() } },
+                                    ),
+                                    notifications = NotificationSettings(
+                                        instant = instantNotifications,
+                                        onInstantChange = { on ->
+                                            container.settings.setInstantNotifications(on)
+                                            if (on) MailPushService.start(this@MainActivity) else MailPushService.stop(this@MainActivity)
+                                        },
+                                        onHideOngoing = {
+                                            runCatching { startActivity(MailPushService.connectionNotificationSettings(this@MainActivity)) }
+                                        },
                                     ),
                                     accountEmail = signedIn.email,
                                     onSignOut = {

@@ -43,7 +43,7 @@ class MailNotifier(
         )
         system.createNotificationChannel(
             NotificationChannel(CHANNEL_CONNECTION, "Connection status", NotificationManager.IMPORTANCE_MIN).apply {
-                description = "Shown while Kylie Mail stays connected to iCloud for instant notifications. You can turn this off."
+                description = "Shown while Kylie Mail stays connected to iCloud for instant notifications. Turning it off hides it; new mail still arrives instantly."
                 setShowBadge(false)
             },
         )
