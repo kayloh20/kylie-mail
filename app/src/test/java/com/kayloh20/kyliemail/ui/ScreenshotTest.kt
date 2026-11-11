@@ -181,8 +181,7 @@ class ScreenshotTest {
 
     private fun touch(selecting: Boolean, swipes: Boolean, count: Int = 0) = TouchActions(
         swipeEnabled = swipes,
-        swipeRight = SwipeAction.READ,
-        swipeLeft = SwipeAction.DELETE,
+        swipes = com.kayloh20.kyliemail.ui.mail.SwipeConfig(SwipeAction.READ, SwipeAction.MOVE, SwipeAction.DELETE, SwipeAction.MOVE),
         onSwipe = { _, _ -> },
         onLongPress = {},
         selecting = selecting,

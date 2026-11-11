@@ -229,8 +229,15 @@ class MailViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     val filingEnabled: StateFlow<Boolean> = settings.filingSuggestions
-    val swipeRight: StateFlow<SwipeAction> = settings.swipeRight
-    val swipeLeft: StateFlow<SwipeAction> = settings.swipeLeft
+    /** All four swipe actions, short and long, in each direction. */
+    val swipes: StateFlow<SwipeConfig> = combine(
+        settings.swipeRight, settings.longSwipeRight, settings.swipeLeft, settings.longSwipeLeft,
+    ) { right, longRight, left, longLeft -> SwipeConfig(right, longRight, left, longLeft) }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            SwipeConfig(settings.swipeRight.value, settings.longSwipeRight.value, settings.swipeLeft.value, settings.longSwipeLeft.value),
+        )
 
     private val _picker = MutableStateFlow<PickerMode?>(null)
     val picker: StateFlow<PickerMode?> = _picker.asStateFlow()

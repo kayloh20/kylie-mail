@@ -118,6 +118,8 @@ class MainActivity : ComponentActivity() {
                             val signature by container.settings.signature.collectAsStateWithLifecycle()
                             val swipeRight by container.settings.swipeRight.collectAsStateWithLifecycle()
                             val swipeLeft by container.settings.swipeLeft.collectAsStateWithLifecycle()
+                            val longSwipeRight by container.settings.longSwipeRight.collectAsStateWithLifecycle()
+                            val longSwipeLeft by container.settings.longSwipeLeft.collectAsStateWithLifecycle()
                             val keepAllEnabled by container.keepAllMail.enabled.collectAsStateWithLifecycle()
                             val instantNotifications by container.settings.instantNotifications.collectAsStateWithLifecycle()
                             val keepAllWifiOnly by container.keepAllMail.wifiOnly.collectAsStateWithLifecycle()
@@ -146,6 +148,10 @@ class MainActivity : ComponentActivity() {
                                         onRightChange = container.settings::setSwipeRight,
                                         left = swipeLeft,
                                         onLeftChange = container.settings::setSwipeLeft,
+                                        longRight = longSwipeRight,
+                                        onLongRightChange = container.settings::setLongSwipeRight,
+                                        longLeft = longSwipeLeft,
+                                        onLongLeftChange = container.settings::setLongSwipeLeft,
                                     ),
                                     keepAll = KeepAllSettings(
                                         enabled = keepAllEnabled,

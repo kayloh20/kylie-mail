@@ -83,6 +83,10 @@ data class SwipeSettings(
     val onRightChange: (SwipeAction) -> Unit,
     val left: SwipeAction,
     val onLeftChange: (SwipeAction) -> Unit,
+    val longRight: SwipeAction = SwipeAction.MOVE,
+    val onLongRightChange: (SwipeAction) -> Unit = {},
+    val longLeft: SwipeAction = SwipeAction.MOVE,
+    val onLongLeftChange: (SwipeAction) -> Unit = {},
 )
 
 /** What the Smart filing section shows and does. */
@@ -228,9 +232,12 @@ fun SettingsContent(
 
             Section("Swipe actions") {
                 SwipeChoice("Swipe right", swipes.right, swipes.onRightChange)
+                SwipeChoice("Long swipe right", swipes.longRight, swipes.onLongRightChange)
                 SwipeChoice("Swipe left", swipes.left, swipes.onLeftChange)
+                SwipeChoice("Long swipe left", swipes.longLeft, swipes.onLongLeftChange)
                 Text(
-                    "On touch screens and narrower windows. Swiped messages can be undone like any other.",
+                    "A long swipe goes past about halfway; you'll feel a tick when you cross into it. " +
+                        "On touch screens and narrower windows, and swiped messages can be undone like any other.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

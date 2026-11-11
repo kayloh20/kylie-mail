@@ -36,7 +36,8 @@ class SwipeOnceTest {
     @get:Rule val compose = createComposeRule()
 
     private fun touch(onSwipe: (Long, SwipeAction) -> Unit) = TouchActions(
-        swipeEnabled = true, swipeRight = SwipeAction.READ, swipeLeft = SwipeAction.FLAG,
+        swipeEnabled = true,
+        swipes = SwipeConfig(right = SwipeAction.READ, longRight = SwipeAction.MOVE, left = SwipeAction.FLAG, longLeft = SwipeAction.NONE),
         onSwipe = onSwipe, onLongPress = {}, selecting = false, selectionCount = 0, canArchive = true,
         onClearSelection = {}, onArchive = {}, onDelete = {}, onMove = {}, onToggleRead = {}, onToggleFlag = {},
     )
@@ -83,11 +84,20 @@ class SwipeOnceTest {
         return fired
     }
 
-    @Test fun swipeRightMarksReadExactlyOnce() {
-        assertEquals(listOf(SwipeAction.READ), runSwipe { swipeRight() })
+    @Test fun shortSwipeRightMarksReadExactlyOnce() {
+        // About 40% of the row: past the short threshold, short of the long one.
+        assertEquals(listOf(SwipeAction.READ), runSwipe { swipeRight(startX = left + 20f, endX = left + 20f + width * 0.4f) })
     }
 
-    @Test fun swipeLeftFlagsExactlyOnce() {
+    @Test fun longSwipeRightMovesExactlyOnce() {
+        assertEquals(listOf(SwipeAction.MOVE), runSwipe { swipeRight() })
+    }
+
+    @Test fun aTinySwipeDoesNothing() {
+        assertEquals(emptyList<SwipeAction>(), runSwipe { swipeRight(startX = left + 20f, endX = left + 20f + width * 0.1f) })
+    }
+
+    @Test fun withNoLongActionTheShortOneCoversTheFullSwipe() {
         assertEquals(listOf(SwipeAction.FLAG), runSwipe { swipeLeft() })
     }
 }

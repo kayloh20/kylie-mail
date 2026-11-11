@@ -86,8 +86,7 @@ fun MailScreen(
     val filingTrained by viewModel.filingTrained.collectAsStateWithLifecycle()
     val filingEnabled by viewModel.filingEnabled.collectAsStateWithLifecycle()
     val inDrafts by viewModel.inDrafts.collectAsStateWithLifecycle()
-    val swipeRight by viewModel.swipeRight.collectAsStateWithLifecycle()
-    val swipeLeft by viewModel.swipeLeft.collectAsStateWithLifecycle()
+    val swipes by viewModel.swipes.collectAsStateWithLifecycle()
     val writing = WritingActions(
         inDrafts = inDrafts,
         onReply = { viewModel.reply(ReplyMode.REPLY) },
@@ -261,11 +260,10 @@ fun MailScreen(
     BackHandler(enabled = selection.touch) { viewModel.clearSelection() }
 
     @Composable
-    fun listPane(showMenu: Boolean, paneModifier: Modifier, swipes: Boolean) = MessageListPane(
+    fun listPane(showMenu: Boolean, paneModifier: Modifier, swipeGestures: Boolean) = MessageListPane(
         touch = TouchActions(
-            swipeEnabled = swipes,
-            swipeRight = swipeRight,
-            swipeLeft = swipeLeft,
+            swipeEnabled = swipeGestures,
+            swipes = swipes,
             onSwipe = viewModel::swipe,
             onLongPress = viewModel::startTouchSelection,
             selecting = selection.touch,
@@ -362,7 +360,7 @@ fun MailScreen(
                         .background(MaterialTheme.colorScheme.surfaceContainerLow),
                 )
                 VerticalDivider()
-                listPane(showMenu = false, paneModifier = Modifier.width(listWidth.coerceAtMost(maxList).dp).fillMaxHeight(), swipes = false)
+                listPane(showMenu = false, paneModifier = Modifier.width(listWidth.coerceAtMost(maxList).dp).fillMaxHeight(), swipeGestures = false)
                 PaneDivider(onDrag = { delta -> listWidth = (listWidth + delta).coerceIn(280f, maxList) })
                 detailPane(showBack = false, paneModifier = Modifier.weight(1f).fillMaxHeight())
             }
@@ -377,7 +375,7 @@ fun MailScreen(
             ) {
                 if (medium) {
                     Row(Modifier.fillMaxSize()) {
-                        listPane(showMenu = true, paneModifier = Modifier.width(listWidth.coerceAtMost(maxList).dp).fillMaxHeight(), swipes = true)
+                        listPane(showMenu = true, paneModifier = Modifier.width(listWidth.coerceAtMost(maxList).dp).fillMaxHeight(), swipeGestures = true)
                         PaneDivider(onDrag = { delta -> listWidth = (listWidth + delta).coerceIn(280f, maxList) })
                         detailPane(showBack = false, paneModifier = Modifier.weight(1f).fillMaxHeight())
                     }
@@ -388,7 +386,7 @@ fun MailScreen(
                     if (showingMessage) {
                         detailPane(showBack = true, paneModifier = Modifier.fillMaxSize())
                     } else {
-                        listPane(showMenu = true, paneModifier = Modifier.fillMaxSize(), swipes = true)
+                        listPane(showMenu = true, paneModifier = Modifier.fillMaxSize(), swipeGestures = true)
                     }
                 }
             }

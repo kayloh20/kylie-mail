@@ -69,6 +69,23 @@ class AppSettings(private val context: Context) {
     private val _swipeLeft = MutableStateFlow(swipe(KEY_SWIPE_LEFT, SwipeAction.DELETE))
     val swipeLeft: StateFlow<SwipeAction> = _swipeLeft.asStateFlow()
 
+    // Long swipes move, as in Spark.
+    private val _longSwipeRight = MutableStateFlow(swipe(KEY_LONG_RIGHT, SwipeAction.MOVE))
+    val longSwipeRight: StateFlow<SwipeAction> = _longSwipeRight.asStateFlow()
+
+    private val _longSwipeLeft = MutableStateFlow(swipe(KEY_LONG_LEFT, SwipeAction.MOVE))
+    val longSwipeLeft: StateFlow<SwipeAction> = _longSwipeLeft.asStateFlow()
+
+    fun setLongSwipeRight(action: SwipeAction) {
+        prefs.edit { putString(KEY_LONG_RIGHT, action.name) }
+        _longSwipeRight.value = action
+    }
+
+    fun setLongSwipeLeft(action: SwipeAction) {
+        prefs.edit { putString(KEY_LONG_LEFT, action.name) }
+        _longSwipeLeft.value = action
+    }
+
     fun setSwipeRight(action: SwipeAction) {
         prefs.edit { putString(KEY_SWIPE_RIGHT, action.name) }
         _swipeRight.value = action
@@ -117,6 +134,8 @@ class AppSettings(private val context: Context) {
         const val KEY_SIGNATURE = "signature"
         const val KEY_SWIPE_RIGHT = "swipe_right"
         const val KEY_SWIPE_LEFT = "swipe_left"
+        const val KEY_LONG_RIGHT = "long_swipe_right"
+        const val KEY_LONG_LEFT = "long_swipe_left"
         const val KEY_INSTANT = "instant_notifications"
     }
 }

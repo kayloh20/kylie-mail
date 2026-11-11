@@ -1,5 +1,17 @@
 package com.kayloh20.kyliemail.ui.mail
 
+import kotlin.math.roundToInt
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.Spring
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.draw.drawBehind
 import com.kayloh20.kyliemail.ui.theme.KylieTheme
@@ -13,11 +25,8 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.graphics.Color
@@ -228,8 +237,7 @@ fun MessageListPane(
 /** Touch-screen behaviour for the message list: swipes, long-press selecting, and the selection bar. */
 data class TouchActions(
     val swipeEnabled: Boolean,
-    val swipeRight: SwipeAction,
-    val swipeLeft: SwipeAction,
+    val swipes: SwipeConfig,
     val onSwipe: (Long, SwipeAction) -> Unit,
     val onLongPress: (Long) -> Unit,
     val selecting: Boolean,
@@ -262,76 +270,95 @@ private fun SelectionBar(touch: TouchActions) {
     )
 }
 
-/** Swipe a message left or right to act on it. The row springs back; removed messages then leave the list. */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Swipe a message left or right to act on it: a short swipe for one action, past about 60% for the
+ * long one. The colour, icon and label follow the finger, with a tick when crossing into a zone.
+ * Letting go acts once, then the row springs back (removed messages then leave the list).
+ */
 @Composable
 private fun SwipeableRow(message: MessageSummary, touch: TouchActions, content: @Composable () -> Unit) {
-    val enabled = touch.swipeEnabled && !touch.selecting
-    if (!enabled || (touch.swipeRight == SwipeAction.NONE && touch.swipeLeft == SwipeAction.NONE)) {
+    val config = touch.swipes
+    if (!touch.swipeEnabled || touch.selecting || !(config.rightEnabled || config.leftEnabled)) {
         content()
         return
     }
     val scope = rememberCoroutineScope()
-    val state = rememberSwipeToDismissBoxState()
-    // Material re-runs onDismiss whenever the callback changes, and acting on the message (marking it
-    // read, say) recomposes the row with a new one. So the callback must stay the same object, read the
-    // latest values through these, and act only once per swipe.
+    val haptics = LocalHapticFeedback.current
+    var dragX by remember { mutableFloatStateOf(0f) }
+    var width by remember { mutableIntStateOf(1) }
+    var zone by remember { mutableStateOf(SwipeZone.NONE) }
+    // The look at the moment of letting go, kept while the row springs back so it can't change midway.
+    var released by remember { mutableStateOf<Triple<Color, ImageVector, String>?>(null) }
+    var springing by remember { mutableStateOf(false) }
+
+    val looks = SwipeAction.entries.associateWith { swipeLook(it, message) }
+    val currentLooks by rememberUpdatedState(looks)
     val currentMessage by rememberUpdatedState(message)
     val currentTouch by rememberUpdatedState(touch)
-    var acted by remember { mutableStateOf(false) }
-    // The label shown while the row springs back, fixed at the moment of the swipe so "Read" doesn't
-    // turn into "Unread" halfway through.
-    var frozenLook by remember { mutableStateOf<Triple<Color, ImageVector, String>?>(null) }
-    val looks = SwipeLooks(swipeLook(touch.swipeRight, message), swipeLook(touch.swipeLeft, message))
-    val currentLooks by rememberUpdatedState(looks)
-    LaunchedEffect(state.settledValue) {
-        if (state.settledValue == SwipeToDismissBoxValue.Settled) {
-            acted = false
-            frozenLook = null
+
+    val dragState = rememberDraggableState { delta ->
+        if (springing) return@rememberDraggableState
+        val swipes = currentTouch.swipes
+        val reach = width * 0.85f
+        dragX = (dragX + delta).coerceIn(if (swipes.leftEnabled) -reach else 0f, if (swipes.rightEnabled) reach else 0f)
+        val now = SwipeZones.zone(dragX / width, swipes)
+        if (now != zone) {
+            if (now != SwipeZone.NONE) haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+            zone = now
         }
     }
-    val onDismiss: (SwipeToDismissBoxValue) -> Unit = remember(state) {
-        { direction ->
-            if (!acted) {
-                acted = true
-                val right = direction == SwipeToDismissBoxValue.StartToEnd
-                frozenLook = if (right) currentLooks.right else currentLooks.left
-                val action = if (right) currentTouch.swipeRight else currentTouch.swipeLeft
-                currentTouch.onSwipe(currentMessage.id, action)
-                scope.launch { state.reset() }
-            }
-        }
-    }
-    SwipeToDismissBox(
-        state = state,
-        enableDismissFromStartToEnd = touch.swipeRight != SwipeAction.NONE,
-        enableDismissFromEndToStart = touch.swipeLeft != SwipeAction.NONE,
-        onDismiss = onDismiss,
-        backgroundContent = {
-            val direction = state.dismissDirection
-            val action = when (direction) {
-                SwipeToDismissBoxValue.StartToEnd -> touch.swipeRight
-                SwipeToDismissBoxValue.EndToStart -> touch.swipeLeft
-                SwipeToDismissBoxValue.Settled -> SwipeAction.NONE
-            }
-            if (action == SwipeAction.NONE) return@SwipeToDismissBox
-            val (color, icon, label) = frozenLook ?: swipeLook(action, message)
+
+    Box(
+        Modifier
+            .onSizeChanged { width = it.width.coerceAtLeast(1) }
+            .draggable(
+                state = dragState,
+                orientation = Orientation.Horizontal,
+                enabled = !springing,
+                onDragStopped = {
+                    val action = SwipeZones.action(dragX / width, currentTouch.swipes)
+                    if (action != SwipeAction.NONE) {
+                        released = currentLooks.getValue(action)
+                        currentTouch.onSwipe(currentMessage.id, action)
+                    }
+                    springing = true
+                    scope.launch {
+                        try {
+                            animate(dragX, 0f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) { value, _ -> dragX = value }
+                        } finally {
+                            dragX = 0f
+                            zone = SwipeZone.NONE
+                            released = null
+                            springing = false
+                        }
+                    }
+                },
+            ),
+    ) {
+        if (dragX != 0f) {
+            val live = SwipeZones.action(dragX / width, config)
+            val (color, icon, label) = released ?: if (live != SwipeAction.NONE) looks.getValue(live) else neutralLook()
+            val right = dragX > 0
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = if (direction == SwipeToDismissBoxValue.StartToEnd) Arrangement.Start else Arrangement.End,
-                modifier = Modifier.fillMaxSize().background(color).padding(horizontal = 24.dp),
+                horizontalArrangement = if (right) Arrangement.Start else Arrangement.End,
+                modifier = Modifier.matchParentSize().background(color).padding(horizontal = 24.dp),
             ) {
-                Icon(icon, contentDescription = null, tint = Color.White)
-                Spacer(Modifier.width(8.dp))
-                Text(label, color = Color.White, style = MaterialTheme.typography.labelLarge)
+                if (label.isNotEmpty()) {
+                    Icon(icon, contentDescription = null, tint = Color.White)
+                    Spacer(Modifier.width(8.dp))
+                    Text(label, color = Color.White, style = MaterialTheme.typography.labelLarge)
+                }
             }
-        },
-    ) {
-        content()
+        }
+        Box(Modifier.offset { IntOffset(dragX.roundToInt(), 0) }) { content() }
     }
 }
 
-private class SwipeLooks(val right: Triple<Color, ImageVector, String>, val left: Triple<Color, ImageVector, String>)
+/** Before a drag reaches a zone: a quiet strip with no label. */
+@Composable
+private fun neutralLook(): Triple<Color, ImageVector, String> =
+    Triple(MaterialTheme.colorScheme.surfaceVariant, Icons.Outlined.Close, "")
 
 @Composable
 private fun swipeLook(action: SwipeAction, message: MessageSummary): Triple<Color, ImageVector, String> = when (action) {
