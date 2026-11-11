@@ -83,6 +83,7 @@ fun MailScreen(
     val notice by viewModel.notice.collectAsStateWithLifecycle()
     val recentMoveTargets by viewModel.recentMoveTargets.collectAsStateWithLifecycle()
     val suggestions by viewModel.suggestions.collectAsStateWithLifecycle()
+    val pickerSuggestions by viewModel.pickerSuggestions.collectAsStateWithLifecycle()
     val filingTrained by viewModel.filingTrained.collectAsStateWithLifecycle()
     val filingEnabled by viewModel.filingEnabled.collectAsStateWithLifecycle()
     val inDrafts by viewModel.inDrafts.collectAsStateWithLifecycle()
@@ -405,7 +406,7 @@ fun MailScreen(
                 excludeId = selectedFolderId,
                 onPick = viewModel::pickFolder,
                 onDismiss = viewModel::closePicker,
-                suggestions = suggestions,
+                suggestions = pickerSuggestions,
             )
         }
         PickerMode.GO_TO -> FolderPickerDialog(

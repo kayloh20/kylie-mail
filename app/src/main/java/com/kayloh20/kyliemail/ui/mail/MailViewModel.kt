@@ -9,6 +9,8 @@ import com.kayloh20.kyliemail.data.db.AttachmentEntity
 import android.content.ContentResolver
 import android.net.Uri
 import java.io.File
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.kayloh20.kyliemail.data.compose.Outbox
@@ -355,7 +357,7 @@ class MailViewModel(
             SwipeAction.DELETE -> removeIds(listOf(id), UserAction.DELETE, null)
             SwipeAction.MOVE -> {
                 moveOverride = listOf(id)
-                _picker.value = PickerMode.MOVE
+                showMovePicker()
             }
         }
     }
@@ -520,7 +522,41 @@ class MailViewModel(
 
     fun openMovePicker() {
         moveOverride = null
-        if (targets().isNotEmpty()) _picker.value = PickerMode.MOVE
+        showMovePicker()
+    }
+
+    private val _pickerSuggestions = MutableStateFlow<PickerSuggestions>(PickerSuggestions.Off)
+
+    /** Suggestions for exactly what the move picker is moving, a swiped message included. */
+    val pickerSuggestions: StateFlow<PickerSuggestions> = _pickerSuggestions.asStateFlow()
+    private var pickerSuggestionsJob: Job? = null
+
+    private fun showMovePicker() {
+        val ids = targets()
+        if (ids.isEmpty()) return
+        pickerSuggestionsJob?.cancel()
+        if (!settings.filingSuggestions.value || !filingTrained.value) {
+            _pickerSuggestions.value = PickerSuggestions.Off
+        } else {
+            _pickerSuggestions.value = PickerSuggestions.Loading
+            pickerSuggestionsJob = viewModelScope.launch {
+                val list = try {
+                    filing.suggest(ids)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    emptyList()
+                }
+                _pickerSuggestions.value = PickerSuggestions.Ready(list)
+            }
+        }
+        _picker.value = PickerMode.MOVE
+    }
+
+    private fun clearPickerSuggestions() {
+        pickerSuggestionsJob?.cancel()
+        pickerSuggestionsJob = null
+        _pickerSuggestions.value = PickerSuggestions.Off
     }
 
     fun openGoToPicker() {
@@ -530,6 +566,7 @@ class MailViewModel(
     fun closePicker() {
         _picker.value = null
         moveOverride = null
+        clearPickerSuggestions()
     }
 
     fun pickFolder(id: Long) {
@@ -541,6 +578,7 @@ class MailViewModel(
             null -> Unit
         }
         moveOverride = null
+        clearPickerSuggestions()
     }
 
     /** How many messages the move picker would move, for its title. */
