@@ -93,7 +93,7 @@ class SyncEngine(
 
     /** Full refresh: the folder list and unread counts, the inbox, and [focusFolderId] if given. */
     suspend fun sync(focusFolderId: Long? = null): SyncOutcome {
-        val outcome = syncHeaders { store ->
+        val outcome = syncHeaders(afterHeaders = ::refreshCounts) { store ->
             syncFolderList(store)
             listOfNotNull(
                 folderDao.getByRole(FolderRole.INBOX),
@@ -459,7 +459,10 @@ class SyncEngine(
      * Syncs message headers for the folders [pickFolders] returns, then downloads recent bodies.
      * The list is up to date as soon as the headers are in; bodies follow without blocking other syncs.
      */
-    private suspend fun syncHeaders(pickFolders: suspend (IMAPStore) -> List<FolderEntity>): SyncOutcome {
+    private suspend fun syncHeaders(
+        afterHeaders: (suspend (IMAPStore) -> Unit)? = null,
+        pickFolders: suspend (IMAPStore) -> List<FolderEntity>,
+    ): SyncOutcome {
         var synced: List<FolderEntity> = emptyList()
         val outcome = mutex.withLock {
             if (credentials.account.value == null) return SyncOutcome.NotSignedIn
@@ -488,6 +491,9 @@ class SyncEngine(
             synced.firstOrNull { it.role == FolderRole.INBOX }?.let { inbox ->
                 folderDao.getById(inbox.id)?.let { runCatching { inboxListener?.invoke(it) } }
             }
+        }
+        if (outcome == SyncOutcome.Success && afterHeaders != null) {
+            withContext(Dispatchers.IO) { runCatchingMail { withConnection { store -> afterHeaders(store) } } }
         }
         if (outcome == SyncOutcome.Success && synced.isNotEmpty()) {
             withContext(Dispatchers.IO) {
@@ -549,14 +555,36 @@ class SyncEngine(
         storeAccount = null
     }
 
+    /**
+     * The folder list, from a single question to the server. Message counts come separately in
+     * [refreshCounts], since asking about every folder takes a while with many folders.
+     */
+    /**
+     * Unread and total counts for every folder, one STATUS each. Runs after the spinner has
+     * stopped, so the mail itself isn't kept waiting on the sidebar.
+     */
+    private suspend fun refreshCounts(store: IMAPStore) {
+        for (folder in folderDao.getAll()) {
+            if (!folder.selectable) continue
+            val status = (store.getFolder(folder.fullName) as IMAPFolder).doCommand { protocol ->
+                protocol.status(folder.fullName, arrayOf("MESSAGES", "UNSEEN"))
+            } as? com.sun.mail.imap.protocol.Status ?: continue
+            val current = folderDao.getById(folder.id) ?: continue
+            if (current.unreadCount != status.unseen || current.totalCount != status.total) {
+                folderDao.update(current.copy(unreadCount = maxOf(status.unseen, 0), totalCount = maxOf(status.total, 0)))
+            }
+        }
+    }
+
     private suspend fun syncFolderList(store: IMAPStore) {
+        val known = folderDao.getAll().associateBy { it.fullName }
         val remote = store.defaultFolder.list("*").filterIsInstance<IMAPFolder>().map { folder ->
             val attributes = folder.attributes.toList()
             val selectable = attributes.none { it.equals("\\Noselect", ignoreCase = true) } &&
                 (folder.type and Folder.HOLDS_MESSAGES) != 0
-            // STATUS on a closed folder, so this stays cheap.
-            val unread = if (selectable) runCatching { folder.unreadMessageCount }.getOrDefault(0) else 0
-            val total = if (selectable) runCatching { folder.messageCount }.getOrDefault(0) else 0
+            // Keep the last known counts until refreshCounts catches up.
+            val unread = known[folder.fullName]?.unreadCount ?: 0
+            val total = known[folder.fullName]?.totalCount ?: 0
             val separator = runCatching { folder.separator }.getOrDefault('/')
             val role = FolderRole.detect(folder.fullName, attributes)
             FolderEntity(

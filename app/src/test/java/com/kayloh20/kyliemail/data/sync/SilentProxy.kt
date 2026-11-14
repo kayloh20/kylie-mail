@@ -23,6 +23,9 @@ class SilentProxy(private val targetPort: Int) : AutoCloseable {
 
     private val links = CopyOnWriteArrayList<Link>()
 
+    /** Delay added to each chunk of data each way, to act like a server far away. */
+    @Volatile var latencyMs = 0L
+
     init {
         thread(isDaemon = true, name = "silent-proxy") {
             while (!server.isClosed) {
@@ -44,6 +47,7 @@ class SilentProxy(private val targetPort: Int) : AutoCloseable {
                 if (n < 0) break
                 // A silent link swallows data forever instead of passing it on or closing.
                 if (link.silent) continue
+                if (latencyMs > 0) Thread.sleep(latencyMs)
                 to.write(buffer, 0, n)
                 to.flush()
             }
