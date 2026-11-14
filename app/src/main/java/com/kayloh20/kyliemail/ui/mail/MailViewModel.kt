@@ -281,6 +281,11 @@ class MailViewModel(
         viewModelScope.launch { repository.refresh(_selectedFolderId.value) }
     }
 
+    /** Refresh pressed or pulled: starts over with fresh connections, even mid-sync. */
+    fun refreshFromScratch() {
+        viewModelScope.launch { repository.refreshFromScratch(_selectedFolderId.value) }
+    }
+
     fun selectFolder(id: Long) {
         if (_selectedFolderId.value == id) return
         _selectedFolderId.value = id

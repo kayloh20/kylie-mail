@@ -436,11 +436,12 @@ class SyncEngine(
     }
 
     /**
-     * The phone changed networks (Wi-Fi to cellular, say) or lost one. Connections made on the old
-     * network go quiet rather than failing, so cut them now: anything waiting on one fails at once
-     * and the next attempt connects afresh, instead of everything waiting out a timeout.
+     * Cuts every connection, for when the phone changed networks (Wi-Fi to cellular, say) or the
+     * person pressed refresh. Connections made on an old network go quiet rather than failing, so
+     * anything waiting on one fails at once and retries on a fresh connection, instead of everyone
+     * waiting out a timeout.
      */
-    fun networkChanged() {
+    fun startOver() {
         store?.let(connector::kill)
         synchronized(sideStores) { sideStores.toList() }.forEach(connector::kill)
     }

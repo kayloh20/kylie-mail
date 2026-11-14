@@ -22,6 +22,7 @@ import com.kayloh20.kyliemail.data.mail.ImapConnector
 import com.kayloh20.kyliemail.data.mail.InlineImageStore
 import com.kayloh20.kyliemail.data.sync.SyncEngine
 import com.kayloh20.kyliemail.data.sync.SyncScheduler
+import com.kayloh20.kyliemail.data.push.MailPushService
 
 /** Builds and holds the app's long-lived objects. */
 class AppContainer(context: Context) {
@@ -51,6 +52,7 @@ class AppContainer(context: Context) {
 
     val repository = MailRepository(
         database, credentials, syncEngine, syncScheduler, inlineImages, imageTrust, actions, notifier, moveHistory, attachments.files,
+        restartWatcher = { MailPushService.reconnect(context.applicationContext) },
     )
 
     init {
@@ -66,13 +68,13 @@ class AppContainer(context: Context) {
 
                 override fun onAvailable(network: android.net.Network) {
                     // Switching networks often arrives as only this, with no word that the old one is gone.
-                    if (current != null && current != network) syncEngine.networkChanged()
+                    if (current != null && current != network) syncEngine.startOver()
                     current = network
                 }
 
                 override fun onLost(network: android.net.Network) {
                     if (network == current) current = null
-                    syncEngine.networkChanged()
+                    syncEngine.startOver()
                 }
             })
         }

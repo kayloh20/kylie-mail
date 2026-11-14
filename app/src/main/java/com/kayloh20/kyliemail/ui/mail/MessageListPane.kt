@@ -159,7 +159,8 @@ fun MessageListPane(
                 // Without the folder sidebar, New message lives here.
                 if (onOpenFolders != null) TooltipIconButton(Icons.Outlined.Edit, "New message (Ctrl+N)", onNewMessage)
                 if (search != null) TooltipIconButton(Icons.Outlined.Search, "Search (Ctrl+F)", search.onOpen)
-                TooltipIconButton(Icons.Outlined.Refresh, "Refresh", onRefresh, enabled = !syncState.running)
+                // Stays pressable mid-sync: pressing it then is how to un-stick one.
+                TooltipIconButton(Icons.Outlined.Refresh, "Refresh", onRefresh)
                 Box {
                     TooltipIconButton(Icons.Outlined.MoreVert, "More", { menuOpen = true })
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {

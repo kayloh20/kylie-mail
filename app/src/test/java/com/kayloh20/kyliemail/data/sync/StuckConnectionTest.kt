@@ -97,12 +97,33 @@ class StuckConnectionTest {
         proxy.goSilent()
         deliver("After the network changed")
 
-        engine.networkChanged()
+        engine.startOver()
         val (outcome, took) = timedSync()
 
         assertEquals(SyncOutcome.Success, outcome)
         assertTrue("took ${took}ms", took < 5_000)
         assertTrue(inboxSubjects().contains("After the network changed"))
+    }
+
+    @Test
+    fun startingOverUnsticksASyncAlreadyWaitingOnAQuietConnection() {
+        assertEquals(SyncOutcome.Success, timedSync().first)
+        proxy.goSilent()
+        deliver("While it was stuck")
+
+        // A sync is already stuck waiting on the quiet connection, the way it is when refresh is pressed.
+        val stuck = java.util.concurrent.CompletableFuture.supplyAsync { timedSync() }
+        Thread.sleep(2_000)
+        assertTrue("should still be waiting", !stuck.isDone)
+
+        val pressed = System.currentTimeMillis()
+        engine.startOver()
+        val (outcome, _) = stuck.get(10, java.util.concurrent.TimeUnit.SECONDS)
+        val freedAfter = System.currentTimeMillis() - pressed
+
+        assertEquals(SyncOutcome.Success, outcome)
+        assertTrue("freed after ${freedAfter}ms", freedAfter < 5_000)
+        assertTrue(inboxSubjects().contains("While it was stuck"))
     }
 
     @Test

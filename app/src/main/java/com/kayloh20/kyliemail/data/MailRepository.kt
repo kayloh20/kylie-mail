@@ -34,7 +34,11 @@ class MailRepository(
     private val notifier: MailNotifier,
     private val moveHistory: MoveHistory,
     private val attachmentFiles: com.kayloh20.kyliemail.data.mail.AttachmentFiles? = null,
+    /** Reconnects the new mail watcher. */
+    private val restartWatcher: () -> Unit = {},
 ) {
+    @Volatile private var lastStartOver = 0L
+
     suspend fun perform(messageId: Long, action: UserAction): Boolean = actions.perform(messageId, action)
 
     suspend fun performAll(
@@ -82,6 +86,21 @@ class MailRepository(
 
     suspend fun refresh(focusFolderId: Long?): SyncOutcome = syncEngine.sync(focusFolderId)
 
+    /**
+     * Refresh pressed: start over with fresh connections, so a sync stuck on a dead one retries
+     * straight away and the new mail watcher reconnects, then sync. A few quick presses in a row
+     * count as one, so they don't keep cutting off the sync they started.
+     */
+    suspend fun refreshFromScratch(focusFolderId: Long?): SyncOutcome {
+        val now = System.currentTimeMillis()
+        if (now - lastStartOver > START_OVER_GAP_MS) {
+            lastStartOver = now
+            syncEngine.startOver()
+            restartWatcher()
+        }
+        return syncEngine.sync(focusFolderId)
+    }
+
     suspend fun refreshFolder(folderId: Long): SyncOutcome = syncEngine.syncFolder(folderId)
 
     suspend fun loadBody(messageId: Long): SyncOutcome = syncEngine.loadBody(messageId)
@@ -103,5 +122,9 @@ class MailRepository(
             attachmentFiles?.clear()
         }
         syncEngine.disconnect()
+    }
+
+    private companion object {
+        const val START_OVER_GAP_MS = 5_000L
     }
 }

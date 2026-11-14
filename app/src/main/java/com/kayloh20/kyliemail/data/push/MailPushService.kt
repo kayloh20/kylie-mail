@@ -84,7 +84,15 @@ class MailPushService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (loop?.isActive != true) loop = scope.launch { run() }
+        if (loop?.isActive == true) {
+            if (intent?.action == ACTION_RECONNECT) {
+                // Refresh was pressed: drop the connection and make a new one right away.
+                closeIdleStore()
+                wake.trySend(Unit)
+            }
+        } else {
+            loop = scope.launch { run() }
+        }
         return START_STICKY
     }
 
@@ -259,6 +267,22 @@ class MailPushService : Service() {
             } catch (e: SecurityException) {
             }
         }
+
+        /** Reconnects now, in case the connection died without anyone noticing. */
+        fun reconnect(context: Context) {
+            val settings = (context.applicationContext as KylieMailApp).container.settings
+            if (!settings.instantNotifications.value) return
+            try {
+                ContextCompat.startForegroundService(
+                    context,
+                    Intent(context, MailPushService::class.java).setAction(ACTION_RECONNECT),
+                )
+            } catch (e: IllegalStateException) {
+            } catch (e: SecurityException) {
+            }
+        }
+
+        private const val ACTION_RECONNECT = "com.kayloh20.kyliemail.RECONNECT"
 
         fun stop(context: Context) {
             context.stopService(Intent(context, MailPushService::class.java))

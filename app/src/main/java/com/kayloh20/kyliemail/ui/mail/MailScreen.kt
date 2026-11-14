@@ -309,7 +309,7 @@ fun MailScreen(
                 ),
             )
         },
-        onRefresh = viewModel::refresh,
+        onRefresh = viewModel::refreshFromScratch,
         onSignOut = viewModel::signOut,
         onOpenSettings = onOpenSettings,
         onNewMessage = viewModel::newMessage,
