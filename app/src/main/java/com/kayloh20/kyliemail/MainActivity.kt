@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import com.kayloh20.kyliemail.data.push.MailPushService
 import com.kayloh20.kyliemail.ui.mail.MailScreen
 import com.kayloh20.kyliemail.ui.mail.MailViewModel
+import com.kayloh20.kyliemail.ui.mail.SignOutDialog
 import com.kayloh20.kyliemail.ui.signin.SignInScreen
 import com.kayloh20.kyliemail.ui.signin.SignInViewModel
 import com.kayloh20.kyliemail.ui.theme.KylieMailTheme
@@ -72,6 +73,7 @@ class MainActivity : ComponentActivity() {
             }
             var showSettings by rememberSaveable { mutableStateOf(false) }
             var showTraining by rememberSaveable { mutableStateOf(false) }
+            var confirmSignOut by rememberSaveable { mutableStateOf(false) }
 
             KylieMailTheme(darkTheme = dark) {
                 Surface(
@@ -172,12 +174,19 @@ class MainActivity : ComponentActivity() {
                                         },
                                     ),
                                     accountEmail = signedIn.email,
-                                    onSignOut = {
+                                    onSignOut = { confirmSignOut = true },
+                                    versionName = versionName(),
+                                    onDismiss = { showSettings = false },
+                                )
+                            }
+                            if (confirmSignOut) {
+                                SignOutDialog(
+                                    onConfirm = {
+                                        confirmSignOut = false
                                         showSettings = false
                                         vm.signOut()
                                     },
-                                    versionName = versionName(),
-                                    onDismiss = { showSettings = false },
+                                    onDismiss = { confirmSignOut = false },
                                 )
                             }
                             if (showTraining) {

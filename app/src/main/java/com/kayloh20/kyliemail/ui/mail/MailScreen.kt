@@ -80,6 +80,7 @@ fun MailScreen(
     val canArchive by viewModel.canArchive.collectAsStateWithLifecycle()
     val selection by viewModel.selection.collectAsStateWithLifecycle()
     val picker by viewModel.picker.collectAsStateWithLifecycle()
+    var confirmSignOut by remember { mutableStateOf(false) }
     val notice by viewModel.notice.collectAsStateWithLifecycle()
     val recentMoveTargets by viewModel.recentMoveTargets.collectAsStateWithLifecycle()
     val suggestions by viewModel.suggestions.collectAsStateWithLifecycle()
@@ -310,7 +311,7 @@ fun MailScreen(
             )
         },
         onRefresh = viewModel::refreshFromScratch,
-        onSignOut = viewModel::signOut,
+        onSignOut = { confirmSignOut = true },
         onOpenSettings = onOpenSettings,
         onNewMessage = viewModel::newMessage,
         search = searchUi,
@@ -394,6 +395,16 @@ fun MailScreen(
         }
 
         SnackbarHost(snackbarHost, Modifier.align(Alignment.BottomCenter))
+    }
+
+    if (confirmSignOut) {
+        SignOutDialog(
+            onConfirm = {
+                confirmSignOut = false
+                viewModel.signOut()
+            },
+            onDismiss = { confirmSignOut = false },
+        )
     }
 
     when (picker) {
