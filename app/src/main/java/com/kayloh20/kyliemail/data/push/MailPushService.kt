@@ -52,13 +52,21 @@ class MailPushService : Service() {
 
     private val container get() = (application as KylieMailApp).container
 
+    /** The network the IDLE connection was made on. */
+    @Volatile private var idleNetwork: Network? = null
+
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            // Moving from Wi-Fi to cellular often arrives as only this, without onLost for the old
+            // network. The IDLE connection went with the old one and will never hear of new mail
+            // again, so cut it and reconnect on the new one.
+            val previous = idleNetwork
+            if (previous != null && previous != network) closeIdleStore()
             wake.trySend(Unit)
         }
 
         override fun onLost(network: Network) {
-            // The socket is dead; closing it ends the blocking IDLE so the loop can wait for a network.
+            // The socket is dead; cutting it ends the blocking IDLE so the loop can wait for a network.
             closeIdleStore()
         }
     }
@@ -95,6 +103,7 @@ class MailPushService : Service() {
             try {
                 val store = container.connector.connect(account.username, account.password, readTimeoutMs = IDLE_READ_TIMEOUT_MS)
                 idleStore = store
+                idleNetwork = getSystemService(ConnectivityManager::class.java)?.activeNetwork
                 if (!store.hasCapability("IDLE")) {
                     // Without IDLE there is nothing to keep open; the periodic sync covers it.
                     stopSelf()
@@ -139,11 +148,17 @@ class MailPushService : Service() {
                 container.syncEngine.syncFolder(inboxFolder.id)
             }
         }
-        // Servers end IDLE after about 30 minutes of silence, so restart it well before that.
+        // Servers end IDLE after about 30 minutes of silence, so restart it well before that. This also
+        // finds out when the connection died without anyone saying so: no answer in time, cut it.
         val keepAlive = scope.launch {
             while (isActive) {
                 delay(REIDLE_INTERVAL_MS)
+                val watchdog = scope.launch {
+                    delay(KEEPALIVE_ANSWER_MS)
+                    closeIdleStore()
+                }
                 runCatching { inbox.doCommand { protocol -> protocol.simpleCommand("NOOP", null); null } }
+                watchdog.cancel()
             }
         }
 
@@ -157,9 +172,12 @@ class MailPushService : Service() {
         }
     }
 
+    /** Cuts the IDLE connection at once. Logging out politely would wait on a dead connection for ages. */
     private fun closeIdleStore() {
         val store = idleStore ?: return
         idleStore = null
+        idleNetwork = null
+        container.connector.kill(store)
         runCatching { store.close() }
     }
 
@@ -222,7 +240,8 @@ class MailPushService : Service() {
         private const val MAX_BACKOFF_MS = 15 * 60_000L
         private const val ONLINE_MAX_BACKOFF_MS = 5 * 60_000L
         private const val DEBOUNCE_MS = 1_500L
-        private const val REIDLE_INTERVAL_MS = 20 * 60_000L
+        private const val REIDLE_INTERVAL_MS = 9 * 60_000L
+        private const val KEEPALIVE_ANSWER_MS = 30_000L
         // Longer than the re-IDLE interval, so a dead connection is noticed within about 25 minutes.
         private const val IDLE_READ_TIMEOUT_MS = 25 * 60_000L
 

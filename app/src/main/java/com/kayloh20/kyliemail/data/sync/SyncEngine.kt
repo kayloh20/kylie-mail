@@ -65,6 +65,7 @@ class SyncEngine(
     private val credentials: AccountSource,
     private val connector: ImapConnector,
     private val inlineImages: InlineImageStore,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val folderDao = db.folders()
     private val messageDao = db.messages()
@@ -80,6 +81,12 @@ class SyncEngine(
     private val connectionLock = Mutex()
     private var store: IMAPStore? = null
     private var storeAccount: Account? = null
+    @Volatile private var lastUsedAt = 0L
+    /** How many callers are using the shared connection right now; it's never replaced under them. */
+    private val users = java.util.concurrent.atomic.AtomicInteger()
+
+    /** Connections opened just for keep-all-mail, so a network change cuts them too. */
+    private val sideStores: MutableSet<IMAPStore> = java.util.Collections.synchronizedSet(mutableSetOf())
 
     private val _state = MutableStateFlow(SyncState())
     val state: StateFlow<SyncState> = _state.asStateFlow()
@@ -282,10 +289,10 @@ class SyncEngine(
         deadline: Long,
         reconcileDue: (FolderEntity) -> Boolean,
         onReconciled: (FolderEntity) -> Unit,
-    ): Boolean = useConnection { store ->
+    ): Boolean = withSideConnection { store ->
         fun timeUp() = System.currentTimeMillis() >= deadline
         for (folder in folders) {
-            if (timeUp()) return@useConnection true
+            if (timeUp()) return@withSideConnection true
             var local = folderDao.getById(folder.id) ?: continue
             if (local.highestUid == 0L) {
                 syncMessages(store, local)
@@ -299,7 +306,7 @@ class SyncEngine(
         }
         for (folder in folders) {
             while (true) {
-                if (timeUp()) return@useConnection true
+                if (timeUp()) return@withSideConnection true
                 val batch = messageDao.needingText(folder.id, TEXT_BATCH)
                 if (batch.isEmpty()) break
                 downloadSearchText(store, folder, batch)
@@ -385,6 +392,30 @@ class SyncEngine(
         }
     }
 
+    /**
+     * Runs [block] on a connection of its own, for long background work that shouldn't tie up
+     * the connection everything else uses.
+     */
+    private suspend fun <T> withSideConnection(block: suspend (IMAPStore) -> T): T = withContext(Dispatchers.IO) {
+        val account = credentials.account.value ?: throw AuthenticationFailedException("Not signed in")
+        val side = connector.connect(account.username, account.password)
+        sideStores += side
+        try {
+            block(side)
+        } finally {
+            sideStores -= side
+            closeQuietly(side)
+        }
+    }
+
+    /** Logs out in the background, then cuts the connection, so a quiet one can't hold anyone up. */
+    private fun closeQuietly(old: IMAPStore) {
+        Thread {
+            runCatching { old.close() }
+            connector.kill(old)
+        }.apply { isDaemon = true }.start()
+    }
+
     /** Runs [block] on the shared IMAP connection, reconnecting once if it has gone stale. */
     suspend fun <T> useConnection(block: suspend (IMAPStore) -> T): T = withContext(Dispatchers.IO) { withConnection(block) }
 
@@ -404,10 +435,20 @@ class SyncEngine(
         }
     }
 
+    /**
+     * The phone changed networks (Wi-Fi to cellular, say) or lost one. Connections made on the old
+     * network go quiet rather than failing, so cut them now: anything waiting on one fails at once
+     * and the next attempt connects afresh, instead of everything waiting out a timeout.
+     */
+    fun networkChanged() {
+        store?.let(connector::kill)
+        synchronized(sideStores) { sideStores.toList() }.forEach(connector::kill)
+    }
+
     /** Closes the shared connection, for example on sign-out. */
     suspend fun disconnect() = withContext(Dispatchers.IO) {
         connectionLock.withLock {
-            runCatching { store?.close() }
+            store?.let(::closeQuietly)
             store = null
             storeAccount = null
         }
@@ -462,31 +503,47 @@ class SyncEngine(
     private suspend fun <T> withConnection(block: suspend (IMAPStore) -> T): T {
         val account = credentials.account.value ?: throw AuthenticationFailedException("Not signed in")
         return try {
-            block(connection(account))
+            using(connection(account), block)
         } catch (e: AuthenticationFailedException) {
             throw e
         } catch (e: MessagingException) {
             dropConnection()
-            block(connection(account))
+            using(connection(account), block)
         } catch (e: IOException) {
             dropConnection()
-            block(connection(account))
+            using(connection(account), block)
+        }
+    }
+
+    private suspend fun <T> using(connected: IMAPStore, block: suspend (IMAPStore) -> T): T {
+        users.incrementAndGet()
+        try {
+            return block(connected)
+        } finally {
+            lastUsedAt = clock()
+            users.decrementAndGet()
         }
     }
 
     private suspend fun connection(account: Account): IMAPStore = connectionLock.withLock {
         val current = store
-        // isConnected sends a NOOP when the connection has been idle, so a dead socket is caught here.
-        if (current != null && storeAccount == account && current.isConnected) return current
-        runCatching { current?.close() }
+        // A connection left unused for a while has often died quietly (the phone slept, changed
+        // networks, or a router forgot it), and checking it means waiting out a timeout. Logging in
+        // again takes a second, so don't bother checking: start over.
+        val fresh = users.get() > 0 || clock() - lastUsedAt < TRUST_UNUSED_MS
+        // isConnected sends a NOOP, so a connection that died recently is caught here.
+        if (current != null && storeAccount == account && fresh && current.isConnected) return current
+        current?.let(::closeQuietly)
+        store = null
         connector.connect(account.username, account.password).also {
             store = it
             storeAccount = account
+            lastUsedAt = clock()
         }
     }
 
     private suspend fun dropConnection() = connectionLock.withLock {
-        runCatching { store?.close() }
+        store?.let(::closeQuietly)
         store = null
         storeAccount = null
     }
@@ -755,6 +812,8 @@ class SyncEngine(
     }
 
     private companion object {
+        /** A connection unused for longer than this is replaced rather than checked. */
+        const val TRUST_UNUSED_MS = 3 * 60_000L
         const val INITIAL_WINDOW = 200
         const val PREFETCH_BODIES = 25
         const val MAX_ATTEMPTS = 5

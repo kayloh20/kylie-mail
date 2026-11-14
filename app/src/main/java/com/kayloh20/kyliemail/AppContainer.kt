@@ -52,4 +52,29 @@ class AppContainer(context: Context) {
     val repository = MailRepository(
         database, credentials, syncEngine, syncScheduler, inlineImages, imageTrust, actions, notifier, moveHistory, attachments.files,
     )
+
+    init {
+        watchNetwork(context)
+    }
+
+    /** Tells sync when the phone switches or loses its network, so it drops connections that went with it. */
+    private fun watchNetwork(context: Context) {
+        val manager = context.getSystemService(android.net.ConnectivityManager::class.java) ?: return
+        runCatching {
+            manager.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+                @Volatile private var current: android.net.Network? = null
+
+                override fun onAvailable(network: android.net.Network) {
+                    // Switching networks often arrives as only this, with no word that the old one is gone.
+                    if (current != null && current != network) syncEngine.networkChanged()
+                    current = network
+                }
+
+                override fun onLost(network: android.net.Network) {
+                    if (network == current) current = null
+                    syncEngine.networkChanged()
+                }
+            })
+        }
+    }
 }
