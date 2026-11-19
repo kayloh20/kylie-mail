@@ -93,6 +93,9 @@ interface MessageDao {
     @Query("SELECT uid FROM messages WHERE folderId = :folderId")
     suspend fun allUids(folderId: Long): List<Long>
 
+    @Query("SELECT uid FROM messages WHERE folderId = :folderId AND uid IN (:uids)")
+    suspend fun existingUids(folderId: Long, uids: List<Long>): List<Long>
+
     /** Newest first, so recent mail becomes searchable soonest. */
     @Query("SELECT * FROM messages WHERE folderId = :folderId AND bodyLoaded = 0 AND textIndexed = 0 ORDER BY uid DESC LIMIT :limit")
     suspend fun needingText(folderId: Long, limit: Int): List<MessageEntity>

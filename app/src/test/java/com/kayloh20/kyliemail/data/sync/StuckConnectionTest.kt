@@ -152,4 +152,25 @@ class StuckConnectionTest {
         assertTrue("took ${took}ms", took < ImapConnector.READ_TIMEOUT_MS + 5_000)
         assertTrue(inboxSubjects().contains("After the router forgot us"))
     }
+
+    /**
+     * The empty inbox: an interrupted sync could remove the local copy of every message. Even when
+     * that's happened, the next sync puts the newest ones back.
+     */
+    @Test
+    fun aLocalCopyThatLostItsMessagesRepairsItself() {
+        deliver("Second email")
+        deliver("Third email")
+        assertEquals(SyncOutcome.Success, timedSync().first)
+        val inbox = runBlocking { db.folders().getByRole(FolderRole.INBOX)!! }
+        val before = inboxSubjects().toSet()
+        assertEquals(3, before.size)
+
+        // What the bug left behind: no messages, but the folder still thinks it's up to date.
+        runBlocking { db.messages().deleteAllInFolder(inbox.id) }
+        assertTrue(inboxSubjects().isEmpty())
+
+        assertEquals(SyncOutcome.Success, timedSync().first)
+        assertEquals(before, inboxSubjects().toSet())
+    }
 }

@@ -15,6 +15,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -110,5 +112,31 @@ class RefreshSpeedTest {
         val counted = db.folders().getAll().filter { it.fullName.startsWith("Project") }
         assertEquals(folderCount, counted.size)
         assertTrue(counted.all { it.totalCount == 2 && it.unreadCount == 1 })
+    }
+
+    /**
+     * What crashed the app: refreshing again while the last refresh was still counting folders. The
+     * new refresh replaces the connection the counting was using, which JavaMail reports as an
+     * IllegalStateException ("Not connected"). Both refreshes must simply finish.
+     */
+    @Test
+    fun refreshingAgainWhileFoldersAreStillBeingCountedDoesNotCrash() = runBlocking {
+        assertEquals(SyncOutcome.Success, engine.sync())
+        proxy.latencyMs = 50
+
+        engine.startOver()
+        val first = async(Dispatchers.IO) { runCatching { engine.sync() } }
+        // Wait until the first refresh is past its spinner and busy counting folders.
+        engine.state.first { it.running }
+        engine.state.first { !it.running }
+        delay(500)
+
+        engine.startOver()
+        val second = runCatching { engine.sync() }
+        val firstResult = first.await()
+
+        assertTrue("first refresh threw ${firstResult.exceptionOrNull()}", firstResult.isSuccess)
+        assertTrue("second refresh threw ${second.exceptionOrNull()}", second.isSuccess)
+        assertEquals(SyncOutcome.Success, second.getOrNull())
     }
 }

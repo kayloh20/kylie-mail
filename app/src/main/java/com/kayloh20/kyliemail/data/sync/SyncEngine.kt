@@ -351,7 +351,8 @@ class SyncEngine(
             if (remote.uidValidity != folder.uidValidity) return
             val all = remote.messages
             remote.fetch(all, FetchProfile().apply { add(UIDFolder.FetchProfileItem.UID) })
-            val onServer = all.mapNotNull { runCatching { remote.getUID(it) }.getOrNull() }.toHashSet()
+            // A UID that couldn't be read must stop this, not count as deleted.
+            val onServer = all.map { remote.getUID(it) }.toHashSet()
             val gone = messageDao.allUids(folder.id).filter { it !in onServer }
             gone.chunked(500).forEach { messageDao.deleteUids(folder.id, it) }
         } finally {
@@ -510,16 +511,28 @@ class SyncEngine(
     private suspend fun <T> withConnection(block: suspend (IMAPStore) -> T): T {
         val account = credentials.account.value ?: throw AuthenticationFailedException("Not signed in")
         return try {
-            using(connection(account), block)
+            attempt(account, block)
         } catch (e: AuthenticationFailedException) {
             throw e
         } catch (e: MessagingException) {
             dropConnection()
-            using(connection(account), block)
+            attempt(account, block)
         } catch (e: IOException) {
             dropConnection()
-            using(connection(account), block)
+            attempt(account, block)
         }
+    }
+
+    /**
+     * One go at [block]. JavaMail reports a connection that was closed under it (by a refresh or
+     * a network change starting over) as IllegalStateException ("Not connected", "Folder is not
+     * Open"); here it becomes an ordinary connection error, retried and reported like any other,
+     * rather than crashing whoever asked.
+     */
+    private suspend fun <T> attempt(account: Account, block: suspend (IMAPStore) -> T): T = try {
+        using(connection(account), block)
+    } catch (e: IllegalStateException) {
+        throw MessagingException("The connection to iCloud was interrupted.", e)
     }
 
     private suspend fun <T> using(connected: IMAPStore, block: suspend (IMAPStore) -> T): T {
@@ -660,6 +673,10 @@ class SyncEngine(
         messageDao.insertAll(newEntities)
         val highest = maxOf(local.highestUid, newUids.maxOrNull() ?: 0L)
 
+        // 1b. The newest messages must all be here. Anything missing (lost to an interrupted sync,
+        // say) is fetched again, so the local copy repairs itself.
+        if (local.highestUid != 0L) refillNewest(remote, local, count)
+
         // 2. Flag changes and deletions for everything we hold.
         val localFlags = messageDao.localFlags(local.id, FLAG_WINDOW)
         if (localFlags.isNotEmpty()) {
@@ -672,15 +689,15 @@ class SyncEngine(
                     add(UIDFolder.FetchProfileItem.UID)
                 },
             )
-            val serverFlags = serverMessages.mapNotNull { message ->
-                runCatching {
-                    remote.getUID(message) to ServerFlags(
-                        isSeen = message.isSet(Flags.Flag.SEEN),
-                        isFlagged = message.isSet(Flags.Flag.FLAGGED),
-                        isAnswered = message.isSet(Flags.Flag.ANSWERED),
-                    )
-                }.getOrNull()
-            }.toMap()
+            // Every message must be accounted for. Skipping one that failed to read (say, because the
+            // connection was cut) would make it look deleted, and it would be removed here.
+            val serverFlags = serverMessages.associate { message ->
+                remote.getUID(message) to ServerFlags(
+                    isSeen = message.isSet(Flags.Flag.SEEN),
+                    isFlagged = message.isSet(Flags.Flag.FLAGGED),
+                    isAnswered = message.isSet(Flags.Flag.ANSWERED),
+                )
+            }
 
             val vanished = SyncPlanner.vanished(localFlags.map { it.uid }, serverFlags.keys)
             // Messages with changes still queued keep their local flags until the queue catches up.
@@ -703,6 +720,20 @@ class SyncEngine(
                 totalCount = count,
             ),
         )
+    }
+
+    private suspend fun refillNewest(remote: IMAPFolder, folder: FolderEntity, count: Int) {
+        val range = SyncPlanner.initialSequenceRange(count, INITIAL_WINDOW) ?: return
+        val window = remote.getMessages(range.first, range.last)
+        remote.fetch(window, FetchProfile().apply { add(UIDFolder.FetchProfileItem.UID) })
+        val byUid = window.associateBy { remote.getUID(it) }
+        val have = byUid.keys.toList().chunked(500).flatMap { messageDao.existingUids(folder.id, it) }.toSet()
+        // Messages being moved or deleted from here are missing on purpose.
+        val pending = actionDao.pendingUids(folder.fullName).toSet()
+        val missing = byUid.filterKeys { it !in have && it !in pending }
+        if (missing.isEmpty()) return
+        remote.fetch(missing.values.toTypedArray(), headerProfile())
+        messageDao.insertAll(missing.mapNotNull { (uid, message) -> runCatching { message.toEntity(folder.id, uid) }.getOrNull() })
     }
 
     /** Replays queued actions. Actions that keep failing are dropped and the local copy is repaired. */
@@ -822,6 +853,9 @@ class SyncEngine(
         SyncOutcome.Failed(describe(e))
     } catch (e: IOException) {
         SyncOutcome.Failed(describe(e))
+    } catch (e: IllegalStateException) {
+        // The connection was closed under this work twice over; never worth crashing the app for.
+        SyncOutcome.Failed("The connection to iCloud was interrupted. Try again.")
     }
 
     private fun describe(e: Exception): String {
