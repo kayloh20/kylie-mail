@@ -65,6 +65,7 @@ data class NotificationSettings(
     val instant: Boolean,
     val onInstantChange: (Boolean) -> Unit,
     val onHideOngoing: () -> Unit,
+    val relay: RelaySettings? = null,
 )
 
 /** "Keep all mail on this device": the switches and how far it has got. */
@@ -177,7 +178,9 @@ fun SettingsContent(
                     Column(Modifier.weight(1f)) {
                         Text("Instant notifications", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            if (notifications.instant) {
+                            if (notifications.instant && notifications.relay?.status is com.kayloh20.kyliemail.data.relay.RelayStatus.Connected) {
+                                "New mail is announced within seconds by your push relay."
+                            } else if (notifications.instant) {
                                 "New mail is announced within seconds. Android shows a small ongoing notification while this is on."
                             } else {
                                 "New mail is checked every 15 minutes, with no ongoing notification."
@@ -188,7 +191,8 @@ fun SettingsContent(
                     }
                     Switch(checked = notifications.instant, onCheckedChange = notifications.onInstantChange)
                 }
-                if (notifications.instant) {
+                val relayWatching = notifications.relay?.status is com.kayloh20.kyliemail.data.relay.RelayStatus.Connected
+                if (notifications.instant && !relayWatching) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "You can hide the ongoing notification and keep instant mail.",
@@ -199,6 +203,7 @@ fun SettingsContent(
                         TextButton(onClick = notifications.onHideOngoing) { Text("Hide it") }
                     }
                 }
+                notifications.relay?.let { RelaySection(it) }
             }
 
             HorizontalDivider(Modifier.padding(horizontal = 24.dp))

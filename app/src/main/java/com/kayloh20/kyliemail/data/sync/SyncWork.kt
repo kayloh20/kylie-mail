@@ -16,6 +16,8 @@ import java.util.concurrent.TimeUnit
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val container = (applicationContext as KylieMailApp).container
+        // Keep the push relay unlocked and current; if it can't be reached, the phone takes over below.
+        if (container.pushRelay.isSetUp) container.pushRelay.checkIn()
         // Bring the instant-notification connection back if Android stopped it (allowed or not, the sync below runs).
         if (container.credentials.account.value != null) MailPushService.start(applicationContext)
         val outcome = container.syncEngine.sync()

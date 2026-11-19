@@ -23,6 +23,10 @@ import com.kayloh20.kyliemail.data.mail.InlineImageStore
 import com.kayloh20.kyliemail.data.sync.SyncEngine
 import com.kayloh20.kyliemail.data.sync.SyncScheduler
 import com.kayloh20.kyliemail.data.push.MailPushService
+import com.kayloh20.kyliemail.data.relay.FirebasePushTokens
+import com.kayloh20.kyliemail.data.relay.HttpRelayApi
+import com.kayloh20.kyliemail.data.relay.PushRelay
+import com.kayloh20.kyliemail.data.relay.SecureRelayConfigStore
 
 /** Builds and holds the app's long-lived objects. */
 class AppContainer(context: Context) {
@@ -50,9 +54,20 @@ class AppContainer(context: Context) {
 
     val outbox = Outbox(context, database, credentials, settings, syncEngine, notifier, attachments, appScope)
 
+    /** The optional push relay; while it's working, the phone doesn't need its own connection. */
+    val pushRelay = PushRelay(
+        store = SecureRelayConfigStore(context),
+        api = HttpRelayApi(),
+        accounts = credentials,
+        tokens = FirebasePushTokens(context.applicationContext),
+        deviceName = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim(),
+        onModeChanged = { MailPushService.start(context.applicationContext) },
+    )
+
     val repository = MailRepository(
         database, credentials, syncEngine, syncScheduler, inlineImages, imageTrust, actions, notifier, moveHistory, attachments.files,
         restartWatcher = { MailPushService.reconnect(context.applicationContext) },
+        leaveRelay = { pushRelay.disconnect() },
     )
 
     init {

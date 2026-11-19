@@ -255,8 +255,9 @@ class MailPushService : Service() {
 
         fun start(context: Context) {
             // Turned off on this device: the 15-minute check still delivers notifications.
-            val settings = (context.applicationContext as KylieMailApp).container.settings
-            if (!settings.instantNotifications.value) {
+            // With a working push relay, the relay announces new mail and this isn't needed.
+            val container = (context.applicationContext as KylieMailApp).container
+            if (!container.settings.instantNotifications.value || container.pushRelay.handlesInstantMail()) {
                 stop(context)
                 return
             }
@@ -270,8 +271,8 @@ class MailPushService : Service() {
 
         /** Reconnects now, in case the connection died without anyone noticing. */
         fun reconnect(context: Context) {
-            val settings = (context.applicationContext as KylieMailApp).container.settings
-            if (!settings.instantNotifications.value) return
+            val container = (context.applicationContext as KylieMailApp).container
+            if (!container.settings.instantNotifications.value || container.pushRelay.handlesInstantMail()) return
             try {
                 ContextCompat.startForegroundService(
                     context,

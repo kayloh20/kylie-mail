@@ -18,6 +18,24 @@ android {
         // CI builds count up so each new APK installs over the previous one.
         versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionName = "0.1.0"
+
+        // Firebase settings for push from the relay, read from google-services.json the way Google's
+        // plugin would. Firebase starts up from these resources on its own.
+        val firebase = file("google-services.json").takeIf { it.exists() }?.let {
+            @Suppress("UNCHECKED_CAST")
+            groovy.json.JsonSlurper().parse(it) as Map<String, Any?>
+        }
+        if (firebase != null) {
+            val project = firebase["project_info"] as Map<*, *>
+            val client = (firebase["client"] as List<*>).map { it as Map<*, *> }.first {
+                ((it["client_info"] as Map<*, *>)["android_client_info"] as Map<*, *>)["package_name"] == applicationId
+            }
+            val apiKey = ((client["api_key"] as List<*>).first() as Map<*, *>)["current_key"] as String
+            resValue("string", "google_app_id", (client["client_info"] as Map<*, *>)["mobilesdk_app_id"] as String)
+            resValue("string", "google_api_key", apiKey)
+            resValue("string", "gcm_defaultSenderId", project["project_number"] as String)
+            resValue("string", "project_id", project["project_id"] as String)
+        }
     }
 
     // Release builds are signed with a private key supplied by the environment (GitHub secrets in CI).
@@ -55,6 +73,7 @@ android {
 
     buildFeatures {
         compose = true
+        resValues = true
     }
 
     testOptions {
@@ -63,6 +82,8 @@ android {
         // Write the images to app/build/screenshots on every run.
         unitTests.all {
             it.systemProperty("roborazzi.test.record", "true")
+            // Each Robolectric test loads a whole Android app: give them room.
+            it.maxHeapSize = "2g"
             // CI skips them: they download a 200 MB Android runtime and are for looking at, not pass/fail.
             if (System.getenv("CI") == "true") it.filter.excludeTestsMatching("*ScreenshotTest")
         }
@@ -111,6 +132,8 @@ dependencies {
     implementation(libs.webkit)
     implementation(libs.coroutines.android)
 
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.messaging)
     implementation(libs.android.mail)
     implementation(libs.android.activation)
 

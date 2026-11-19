@@ -45,6 +45,7 @@ import com.kayloh20.kyliemail.data.push.MailPushService
 import com.kayloh20.kyliemail.ui.mail.MailScreen
 import com.kayloh20.kyliemail.ui.mail.MailViewModel
 import com.kayloh20.kyliemail.ui.mail.SignOutDialog
+import com.kayloh20.kyliemail.ui.settings.RelaySettings
 import com.kayloh20.kyliemail.ui.signin.SignInScreen
 import com.kayloh20.kyliemail.ui.signin.SignInViewModel
 import com.kayloh20.kyliemail.ui.theme.KylieMailTheme
@@ -124,6 +125,7 @@ class MainActivity : ComponentActivity() {
                             val longSwipeLeft by container.settings.longSwipeLeft.collectAsStateWithLifecycle()
                             val keepAllEnabled by container.keepAllMail.enabled.collectAsStateWithLifecycle()
                             val instantNotifications by container.settings.instantNotifications.collectAsStateWithLifecycle()
+                            val relayStatus by container.pushRelay.status.collectAsStateWithLifecycle()
                             val keepAllWifiOnly by container.keepAllMail.wifiOnly.collectAsStateWithLifecycle()
                             val keepAllProgress by remember { container.keepAllMail.progress }.collectAsStateWithLifecycle(null)
                             if (showSettings) {
@@ -172,6 +174,11 @@ class MainActivity : ComponentActivity() {
                                         onHideOngoing = {
                                             runCatching { startActivity(MailPushService.connectionNotificationSettings(this@MainActivity)) }
                                         },
+                                        relay = RelaySettings(
+                                            status = relayStatus,
+                                            onConnect = container.pushRelay::connect,
+                                            onDisconnect = { container.appScope.launch { container.pushRelay.disconnect() } },
+                                        ),
                                     ),
                                     accountEmail = signedIn.email,
                                     onSignOut = { confirmSignOut = true },

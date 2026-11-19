@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "172959241290",
+    "project_id": "kylie-mail",
+    "storage_bucket": "kylie-mail.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:172959241290:android:2df97e65a29f9b0fab42b3",
+        "android_client_info": {
+          "package_name": "com.kayloh20.kyliemail"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAggdKvTA68AtyDG50Kq_Er3dOmfNJmfm4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

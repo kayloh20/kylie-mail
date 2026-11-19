@@ -36,6 +36,8 @@ class MailRepository(
     private val attachmentFiles: com.kayloh20.kyliemail.data.mail.AttachmentFiles? = null,
     /** Reconnects the new mail watcher. */
     private val restartWatcher: () -> Unit = {},
+    /** Signs this device off the push relay, which deletes the password there once no devices are left. */
+    private val leaveRelay: suspend () -> Unit = {},
 ) {
     @Volatile private var lastStartOver = 0L
 
@@ -111,6 +113,7 @@ class MailRepository(
     }
 
     suspend fun signOut() {
+        runCatching { leaveRelay() }
         scheduler.cancel()
         syncEngine.exclusive {
             withContext(Dispatchers.IO) { db.clearAllTables() }

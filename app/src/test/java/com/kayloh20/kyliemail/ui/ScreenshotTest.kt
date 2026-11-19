@@ -63,6 +63,20 @@ import java.nio.file.Files
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [35], qualifiers = "w1280dp-h800dp-xhdpi", application = android.app.Application::class)
 class ScreenshotTest {
+    /**
+     * A still picture needs no animation, and endless ones (progress spinners) would otherwise keep
+     * the screenshot waiting for the screen to settle forever.
+     */
+    @org.junit.Before
+    fun noAnimations() {
+        // Compose reads the same "animator duration scale" setting as Developer options.
+        android.provider.Settings.Global.putFloat(
+            androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>().contentResolver,
+            android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+            0f,
+        )
+    }
+
     private val now = System.currentTimeMillis()
 
     private fun folder(id: Long, name: String, role: FolderRole, unread: Int = 0, depth: Int = 0) = FolderEntity(
@@ -140,7 +154,14 @@ class ScreenshotTest {
                         filing = FilingSettings(true, {}, "Learned from 2,340 emails in 9 folders, and keeps learning as you file.", {}),
                         sending = SendingSettings("Kylie", {}, "Kylie\nCheer captain 📣", {}),
                         swipes = SwipeSettings(SwipeAction.READ, {}, SwipeAction.DELETE, {}),
-                        notifications = NotificationSettings(true, {}, {}),
+                        notifications = NotificationSettings(
+                            true, {}, {},
+                            relay = com.kayloh20.kyliemail.ui.settings.RelaySettings(
+                                com.kayloh20.kyliemail.data.relay.RelayStatus.Connected("https://mail-push.example.org", System.currentTimeMillis() - 4 * 60_000L),
+                                { _, _ -> com.kayloh20.kyliemail.data.relay.ConnectResult.Connected },
+                                {},
+                            ),
+                        ),
                         keepAll = KeepAllSettings(
                             enabled = true,
                             onEnabledChange = {},
