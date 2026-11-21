@@ -18,6 +18,11 @@ Planned next: notifications with near-instant delivery (IMAP IDLE), an offline a
 delete, move, mark read and flag, right-click menus, multi-select, a move-to-folder shortcut, and
 suggested filing.
 
+## On the web
+
+The web version lives in [`web/`](web/README.md) and runs on its own server. It is at an early
+stage: the server and its security groundwork are in place, and passkey sign-in comes next.
+
 ## Signing in
 
 iCloud requires an app-specific password for mail apps other than Apple Mail:
