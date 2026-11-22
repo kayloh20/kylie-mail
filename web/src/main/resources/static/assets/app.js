@@ -408,6 +408,7 @@ const mail = {
   items: new Map(), // list rows by message key
   undo: null, // what Undo does right now
   suggest: { key: "", trained: true, list: [] }, // smart filing's ideas for the selection
+  filingTrained: null, // whether smart filing has learned anything, as of the last answer
 };
 
 const shortDate = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
@@ -910,53 +911,78 @@ function selectionKey() {
 
 let suggestTimer = null;
 
-/** Asks where the selected mail might go, a moment after the selection settles. */
+/**
+ * Asks where the selected mail might go. The bar takes its place right away, with a placeholder,
+ * so the answer swaps in without pushing the message down.
+ */
 function requestSuggestions() {
   const key = selectionKey();
   if (mail.suggest.key === key) return renderSuggestBar();
-  $("suggest-bar").hidden = true;
+  renderSuggestBar();
   clearTimeout(suggestTimer);
   const folder = selectionFolder();
+  const nothing = () => {
+    mail.suggest = { key, trained: mail.filingTrained ?? true, list: [] };
+    if (selectionKey() === key) renderSuggestBar();
+  };
   // Suggestions are for messages from one folder at a time.
-  if (!folder) return;
+  if (!folder) return nothing();
   suggestTimer = setTimeout(async () => {
     if (selectionKey() !== key || !mail.selected.size) return;
     try {
       const chosen = selectedMessages();
       const uids = chosen.slice(0, 50).map((m) => m.uid).join(",");
       const reply = await api("GET", `/api/filing/suggest?folder=${encodeURIComponent(folder)}&validity=${chosen[0].validity}&uids=${uids}`);
+      mail.filingTrained = reply.trained;
       mail.suggest = { key, trained: reply.trained, list: reply.suggestions };
       if (selectionKey() === key) renderSuggestBar();
     } catch {
-      // Suggestions are a nicety; the mail still works without them.
+      // Suggestions are a nicety: offer the folder picker instead.
+      nothing();
     }
-  }, 150);
+  }, 60);
 }
 
 function currentSuggestions() {
   return mail.suggest.key === selectionKey() ? mail.suggest.list : [];
 }
 
+/**
+ * The "File to" bar keeps one size from the moment a message is selected: a placeholder while
+ * smart filing thinks, then its suggestions, or a way to choose a folder when it isn't sure, as
+ * the app offers. Nothing jumps.
+ */
 function renderSuggestBar() {
   const bar = $("suggest-bar");
-  if (mail.suggest.key !== selectionKey() || !mail.selected.size) {
+  if (!mail.selected.size) {
     bar.hidden = true;
     return;
   }
-  if (!mail.suggest.trained) {
+  bar.hidden = false;
+  const ready = mail.suggest.key === selectionKey();
+  const trained = ready ? mail.suggest.trained : mail.filingTrained;
+  const spark = () => el("span", { className: "spark", textContent: "✨" });
+  if (trained === false) {
     const train = el("button", { type: "button", className: "link", textContent: "Train smart filing" });
     train.onclick = () => openTraining();
-    bar.replaceChildren(el("span", { className: "spark", textContent: "✨" }), el("span", { textContent: "Smart filing can suggest folders once it learns how you file." }), train);
-    bar.hidden = false;
+    bar.replaceChildren(spark(), el("span", { textContent: "Smart filing can suggest folders once it learns how you file." }), train);
+    return;
+  }
+  if (!ready) {
+    const placeholder = el("span", { className: "chip skeleton", textContent: "Receipts" });
+    placeholder.setAttribute("aria-hidden", "true");
+    bar.replaceChildren(spark(), el("span", { textContent: "File to" }), placeholder);
     return;
   }
   const confident = mail.suggest.list.filter((s) => s.confident).slice(0, 2);
   if (!confident.length) {
-    bar.hidden = true;
+    const choose = el("button", { type: "button", className: "chip choose", textContent: "Choose a folder…", title: "Move to… (M)" });
+    choose.onclick = () => openPicker("move");
+    bar.replaceChildren(spark(), el("span", { textContent: "File to" }), choose);
     return;
   }
   bar.replaceChildren(
-    el("span", { className: "spark", textContent: "✨" }),
+    spark(),
     el("span", { textContent: "File to" }),
     ...confident.map((s) => {
       const chip = el("button", { type: "button", className: "chip", textContent: s.name, title: s.reason });

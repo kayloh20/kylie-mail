@@ -750,4 +750,16 @@ class MailFlowTest {
         inbox()
         assertEquals(4, folders().first { it.name == "Inbox" }.unread)
     }
+
+    @Test
+    fun suggestionsDoNotWaitForTheMailServer() = server {
+        train("Receipts")
+        val inbox = inbox()
+        val order = inbox.messages.first { it.subject == "Your order has shipped" }
+        // The list was just read; suggesting needs nothing more from iCloud, so it can't queue
+        // behind the message being downloaded. Prove it: switch the mail server off.
+        mail.close()
+        val reply = get("/api/filing/suggest?folder=INBOX&validity=${inbox.validity}&uids=${order.uid}").read(SuggestReply.serializer())
+        assertEquals("Receipts", reply.suggestions.first().folder)
+    }
 }

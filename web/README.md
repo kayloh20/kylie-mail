@@ -103,8 +103,10 @@ the sender's company and words in the subject. No AI, and never the message itse
 - **It learns from you**: every Move and Archive is a lesson, and an undone one isn't. Deleting
   isn't filing.
 - **Suggestions** appear as one-click *File to* buttons above a message when it's confident (hover
-  for why), as *File to …* at the top of the right-click menu, and as a *Suggested* section in the
-  Move picker.
+  for why), or *Choose a folder…* when it isn't, as *File to …* at the top of the right-click menu,
+  and as a *Suggested* section in the Move picker. They come from the sender, recipients and
+  subject already read with the message list, so they show up straight away rather than after the
+  message has downloaded, and the bar keeps its size from the start so the message never shifts.
 - **What it learns is sealed** with your account key in `filing.sealed`, like the password, and is
   only opened in memory while you're signed in.
 

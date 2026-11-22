@@ -270,6 +270,7 @@ class MailClient(
         val leaving = synchronized(pending) {
             pending.values.filter { it.folder == folderId && it.validity == f.uidValidity }.flatMap { it.uids }.toSet()
         }
+        runCatching { rememberFeatures(folderId, f.uidValidity, readFeatures(f, messages)) }
         MessagePage(
             folder = folderId,
             validity = f.uidValidity,
@@ -435,6 +436,7 @@ class MailClient(
                     val leaving = synchronized(pending) {
                         pending.values.filter { it.folder == folder.id && it.validity == f.uidValidity }.flatMap { it.uids }.toSet()
                     }
+                    runCatching { rememberFeatures(folder.id, f.uidValidity, readFeatures(f, messages)) }
                     for (m in messages) {
                         val summary = runCatching { summary(f, m) }.getOrNull() ?: continue
                         if (summary.uid !in leaving) hits += SearchHit(folder.id, f.uidValidity, summary)
@@ -449,9 +451,27 @@ class MailClient(
     }
 
     /** Sender, recipients and subject of [uids], for smart filing. */
-    suspend fun features(folderId: String, validity: Long, uids: List<Long>): List<MessageFeatures> = run { store ->
-        val f = open(store, folderId, validity)
-        readFeatures(f, f.getMessagesByUID(uids.toLongArray()).filterNotNull().toTypedArray())
+    suspend fun features(folderId: String, validity: Long, uids: List<Long>): List<MessageFeatures> {
+        // Listed messages were already read with their senders and recipients: no need to wait for
+        // the connection, which may be busy downloading the message being opened.
+        val known = synchronized(featureCache) { uids.associateWith { featureCache[featureKey(folderId, validity, it)] } }
+        val missing = known.filterValues { it == null }.keys
+        val fetched = if (missing.isEmpty()) emptyList() else run { store ->
+            val f = open(store, folderId, validity)
+            readFeatures(f, f.getMessagesByUID(missing.toLongArray()).filterNotNull().toTypedArray())
+        }.also { rememberFeatures(folderId, validity, it) }
+        return known.values.filterNotNull() + fetched
+    }
+
+    /** Senders, recipients and subjects of messages seen in lists, in memory for this session only. */
+    private val featureCache = object : LinkedHashMap<String, MessageFeatures>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MessageFeatures>) = size > FEATURE_CACHE_SIZE
+    }
+
+    private fun featureKey(folderId: String, validity: Long, uid: Long) = "$folderId\u0000$validity\u0000$uid"
+
+    private fun rememberFeatures(folderId: String, validity: Long, features: List<MessageFeatures>) = synchronized(featureCache) {
+        for (f in features) featureCache[featureKey(folderId, validity, f.uid)] = f
     }
 
     /**
@@ -692,6 +712,9 @@ class MailClient(
         const val MAX_DOWNLOAD = 60L * 1024 * 1024
         /** How long a removal waits before going to iCloud, as in the app. */
         const val UNDO_MS = 6_000L
+
+        /** How many listed messages' senders and subjects a session keeps for suggestions. */
+        private const val FEATURE_CACHE_SIZE = 5000
 
         /** How old the remembered folder list may get before a full refresh in the background. */
         const val FULL_REFRESH_MS = 10 * 60 * 1000L

@@ -320,6 +320,22 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; }
   border-color: var(--accent-glow);
 }
 .suggest-bar button.chip::before { content: "📁 "; }
+/* One height whatever it shows, so swapping the placeholder for the answer moves nothing. */
+.suggest-bar { min-height: 42px; box-sizing: border-box; }
+.suggest-bar .chip.skeleton {
+  display: inline-block;
+  padding: 4px 12px 4px 34px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 0.93rem;
+  font-weight: 500;
+  color: transparent;
+  background: var(--bg-tertiary);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: 0.45; } }
+.suggest-bar button.chip.choose { background: transparent; border-style: dashed; border-color: var(--border-strong); color: var(--text-secondary); }
+.suggest-bar button.chip.choose:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-subtle); }
 .checks li { justify-content: flex-start; }
 .checks label { display: flex; align-items: center; gap: 10px; font-weight: 500; flex: 1; }
 .checks small { margin-left: auto; }
