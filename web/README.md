@@ -6,11 +6,9 @@ and smart filing.
 
 ## Status
 
-Signing in, reading, acting on mail and smart filing work: passkeys and recovery codes, folders
-with unread counts, the message list, messages with their attachments, deleting, archiving, moving
-and flagging with undo, and folder suggestions. Coming next:
-
-1. **Writing.** Replies, forwards and new mail, in plain text only, like the app.
+Everything the plan set out: passkey sign-in with recovery codes, reading, deleting, archiving,
+moving and flagging with undo, smart filing, and writing in plain text. Not yet: search, and
+notifications in the browser (your phone still gets them through the push relay).
 
 ## Signing in
 
@@ -26,7 +24,7 @@ and flagging with undo, and folder suggestions. Coming next:
 ## Reading
 
 - **Folders, messages and the message itself**, side by side on a big screen and one at a time on
-  a phone. <kbd>R</kbd> refreshes. Opening a message marks it read, like the app.
+  a phone. The ↻ button refreshes. Opening a message marks it read, like the app.
 - **HTML email gets three locks.** The server strips anything active (scripts, forms, frames,
   plugins, event handlers, refreshes, outside style sheets). The message is then shown in a
   sandboxed frame where scripts can't run at all, under its own content security policy that
@@ -56,6 +54,9 @@ Like the app on a big screen:
 | Flag | Right-click, toolbar | <kbd>S</kbd> |
 | Undo a delete, archive or move | *Undo* on the notice | <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Z</kbd> |
 | Go to a folder | Folder list | <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>K</kbd> |
+| New message | ✏️ | <kbd>N</kbd> |
+| Reply, reply all, forward | Right-click, toolbar | <kbd>R</kbd>, <kbd>A</kbd>, <kbd>F</kbd> |
+| Edit a draft | In Drafts: toolbar, right-click | <kbd>Enter</kbd> |
 | Clear the selection | | <kbd>Esc</kbd> |
 
 Deleting moves to Trash; deleting from Trash deletes for good. As in the app, deletes, archives and
@@ -78,6 +79,28 @@ the sender's company and words in the subject. No AI, and never the message itse
   Move picker.
 - **What it learns is sealed** with your account key in `filing.sealed`, like the password, and is
   only opened in memory while you're signed in.
+
+## Writing
+
+- **Plain text only, like the app.** Messages are built by the app's own `MessageComposer`: one
+  plain-text part, files as standard attachments, never HTML, no tracking, no extra headers. Bcc
+  recipients stay invisible to everyone, and reply headers coming from the browser can't add
+  headers of their own.
+- **Replies, reply all and forwards** come from the app's `ReplyBuilder`: quoted, with the right
+  recipients and subject. Forwards carry the original's attachments. Your name and signature are
+  set in Settings and sealed with your account key.
+- **Send** with <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Enter</kbd>. It waits 6 seconds so *Undo*
+  brings it back into the window, as in the app. Then it goes over iCloud's SMTP, a copy goes in
+  Sent unless iCloud already filed one, and the original is marked answered. The wait is on the
+  server: closing the tab doesn't stop it, and signing out sends it right away.
+- **Drafts.** <kbd>Esc</kbd> closes the window and saves what you wrote to iCloud's Drafts folder
+  (an empty message just closes). Open a draft there to keep writing; saving or sending it replaces
+  the old one.
+- **Attachments** by picking or dropping files, up to 14 MB in all, iCloud's limit with room for
+  encoding. While you write, they wait in the container's temporary folder, which is memory
+  (tmpfs), never the disk, and they're deleted once sent or discarded, or when you sign out.
+- **Addresses are suggested** from people who wrote to you lately and people you wrote to, gathered
+  once per session and kept in memory only.
 
 ## How your mail is protected
 

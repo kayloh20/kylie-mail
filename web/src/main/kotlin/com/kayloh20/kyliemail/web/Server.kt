@@ -78,6 +78,7 @@ fun Application.webModule(config: WebConfig, services: Services = Services.creat
         get("/healthz") { call.respondText("ok", ContentType.Text.Plain) }
         authRoutes(services)
         mailRoutes(services)
+        composeRoutes(services)
         staticResources("/assets", "static/assets")
         staticResources("/", "static", index = "index.html")
     }

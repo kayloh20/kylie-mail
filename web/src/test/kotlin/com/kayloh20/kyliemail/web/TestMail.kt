@@ -69,6 +69,8 @@ class TestMail(imapPort: Int = 0, smtpPort: Int = 0) : AutoCloseable {
         // iCloud's own names for these.
         createFolder("Archive")
         createFolder("Deleted Messages")
+        createFolder("Drafts")
+        createFolder("Sent Messages")
         createFolder("Receipts")
         file("Receipts", *Array(5) { pastOrder(it + 1) })
         val day = 24 * 60 * 60 * 1000L
@@ -110,6 +112,15 @@ class TestMail(imapPort: Int = 0, smtpPort: Int = 0) : AutoCloseable {
             setFlag(Flags.Flag.FLAGGED, true)
         })
     }
+
+    /** Every message delivered over SMTP, one copy per recipient. */
+    fun received(): List<MimeMessage> = greenMail.receivedMessages.filter { m -> m.getHeader("Received") != null }
+
+    /** Messages that arrived over SMTP for addresses at [domain]. */
+    fun receivedAt(domain: String): List<MimeMessage> = greenMail.getReceivedMessagesForDomain(domain).toList()
+
+    /** A message exactly as it went over the wire. */
+    fun raw(message: MimeMessage): String = java.io.ByteArrayOutputStream().also { message.writeTo(it) }.toString(Charsets.UTF_8)
 
     override fun close() = greenMail.stop()
 

@@ -83,9 +83,10 @@
       <img src="/assets/icon.svg" alt="" width="28" height="28">
       <span>Kylie Mail</span>
     </div>
+    <button type="button" id="new-message" class="new-message" title="New message (N)" aria-label="New message"><span aria-hidden="true">✏️</span><span class="label"> New message</span></button>
     <ul id="folder-list" class="folders"></ul>
-    <label class="folder-select">Folder
-      <select id="folder-select"></select>
+    <label class="folder-select"><span class="label">Folder</span>
+      <select id="folder-select" aria-label="Folder"></select>
     </label>
     <div class="sidebar-foot">
       <button type="button" id="open-settings" class="link">Settings</button>
@@ -96,7 +97,10 @@
   <section id="list-pane" aria-label="Messages">
     <header class="pane-head">
       <h2 id="folder-title">Inbox</h2>
-      <button type="button" id="refresh" class="icon" title="Refresh (R)" aria-label="Refresh">↻</button>
+      <div class="row">
+        <button type="button" id="new-message-small" class="icon" title="New message (N)" aria-label="New message">✏️</button>
+        <button type="button" id="refresh" class="icon" title="Refresh" aria-label="Refresh">↻</button>
+      </div>
     </header>
     <p id="recovered" class="warning" hidden>You signed in with a recovery code. Add a passkey in Settings so you don't run out.</p>
     <p id="list-status" class="note pad" role="status"></p>
@@ -111,6 +115,10 @@
     </div>
     <div id="toolbar" class="toolbar" role="toolbar" aria-label="Message actions" hidden>
       <button type="button" id="back" class="link back">‹ Back</button>
+      <button type="button" data-act="reply" title="Reply (R)">Reply</button>
+      <button type="button" data-act="replyAll" title="Reply all (A)">Reply all</button>
+      <button type="button" data-act="forward" title="Forward (F)">Forward</button>
+      <button type="button" data-act="editDraft" title="Edit this draft (Enter)">Edit draft</button>
       <button type="button" data-act="archive" title="Archive (E)">Archive</button>
       <button type="button" data-act="delete" title="Delete (Delete)">Delete</button>
       <button type="button" data-act="move" title="Move to… (M)">Move to…</button>
@@ -157,6 +165,44 @@
   <button type="button" id="toast-undo" class="link">Undo</button>
 </div>
 
+<dialog id="compose" class="compose" aria-labelledby="compose-title">
+  <div class="dialog-head">
+    <h2 id="compose-title">New message</h2>
+    <button type="button" id="compose-close" class="icon" title="Close and save a draft (Esc)" aria-label="Close and save a draft">✕</button>
+  </div>
+  <form id="compose-form" autocomplete="off">
+    <div class="field">
+      <label for="c-to">To</label>
+      <input id="c-to" name="to" class="address" spellcheck="false" autocomplete="off">
+      <button type="button" id="show-cc" class="link">Cc Bcc</button>
+    </div>
+    <div class="field" id="cc-row" hidden>
+      <label for="c-cc">Cc</label>
+      <input id="c-cc" name="cc" class="address" spellcheck="false" autocomplete="off">
+    </div>
+    <div class="field" id="bcc-row" hidden>
+      <label for="c-bcc">Bcc</label>
+      <input id="c-bcc" name="bcc" class="address" spellcheck="false" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="c-subject">Subject</label>
+      <input id="c-subject" name="subject">
+    </div>
+    <textarea id="c-body" name="body" aria-label="Message" spellcheck="true"></textarea>
+    <ul id="c-files" class="attachments" aria-label="Attached files"></ul>
+    <p class="note" id="c-hint">Plain text only, like the app. Drop files here to attach them.</p>
+    <p class="error" role="alert"></p>
+    <div class="row spread">
+      <div class="row">
+        <button type="submit" id="c-send" title="Send (⌘/Ctrl+Enter)">Send</button>
+        <label class="file-button" title="Attach files">📎 Attach<input type="file" id="c-attach" multiple hidden></label>
+      </div>
+      <button type="button" id="c-discard" class="link">Discard</button>
+    </div>
+  </form>
+  <ul id="contact-suggest" class="contact-suggest" role="listbox" hidden></ul>
+</dialog>
+
 <dialog id="settings">
   <div class="dialog-head">
     <h2>Settings</h2>
@@ -172,6 +218,19 @@
       <button type="submit" class="secondary">Add a passkey</button>
     </form>
     <p class="error" role="alert"></p>
+  </section>
+
+  <section class="card">
+    <h3>Writing</h3>
+    <form id="identity-form" autocomplete="off">
+      <label>Your name, as people see it
+        <input name="name" maxlength="100" placeholder="Kylie">
+      </label>
+      <label>Signature
+        <textarea name="signature" rows="3" maxlength="2000" placeholder="Sent from Kylie Mail"></textarea>
+      </label>
+      <div class="row"><button type="submit" class="secondary">Save</button><span id="identity-saved" class="note"></span></div>
+    </form>
   </section>
 
   <section class="card" id="filing-card">

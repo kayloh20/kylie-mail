@@ -253,8 +253,16 @@ async function loadFiling() {
   return filing;
 }
 
+async function loadIdentity() {
+  const identity = await api("GET", "/api/compose/identity");
+  const form = $("identity-form");
+  form.elements.name.value = identity.name;
+  form.elements.signature.value = identity.signature;
+  $("identity-saved").textContent = "";
+}
+
 async function openSettings(scrollTo) {
-  await Promise.all([loadSettings().catch(() => {}), loadFiling().catch(() => {})]);
+  await Promise.all([loadSettings().catch(() => {}), loadFiling().catch(() => {}), loadIdentity().catch(() => {})]);
   if (!$("settings").open) $("settings").showModal();
   if (scrollTo) $(scrollTo).scrollIntoView({ block: "start" });
 }
@@ -272,7 +280,8 @@ const mail = {
   cursor: null, // the message the arrow keys move from
   detail: null, // the open message
   loadToken: 0,
-  lastRemoval: null, // what Undo takes back
+  lastRemoval: null, // the last delete or move, for Undo
+  undo: null, // what Undo does right now
   suggest: { key: "", trained: true, list: [] }, // smart filing's ideas for the selection
 };
 
@@ -551,6 +560,21 @@ function updateToolbar() {
   buttons.flag.textContent = allFlagged ? "Unflag" : "Flag";
   buttons.archive.hidden = !canArchive();
   buttons.delete.textContent = deletesForGood() ? "Delete for good" : "Delete";
+  const single = chosen.length === 1;
+  const drafts = inDrafts();
+  for (const name of ["reply", "replyAll", "forward"]) buttons[name].hidden = !single || drafts;
+  buttons.editDraft.hidden = !single || !drafts;
+}
+
+function inDrafts() {
+  const current = currentFolder();
+  return !!current && current.role === "drafts";
+}
+
+/** The one selected message, as the server knows it. */
+function selectedRef() {
+  if (mail.selected.size !== 1) return null;
+  return { folder: mail.folder, validity: mail.validity, uid: [...mail.selected][0] };
 }
 
 function bodyUrl(detail, images) {
@@ -701,6 +725,14 @@ function act(action) {
       return removeSelected("delete");
     case "move":
       return openPicker("move");
+    case "reply":
+    case "replyAll":
+    case "forward":
+      if (!inDrafts() && selectedRef()) openCompose(action, selectedRef());
+      return;
+    case "editDraft":
+      if (inDrafts() && selectedRef()) openCompose("draft", selectedRef());
+      return;
   }
 }
 
@@ -754,6 +786,7 @@ async function removeSelected(action, target = null) {
     if (removal.target) adjustCounts(removal.target, unseen, items.length);
     renderFolders();
     mail.lastRemoval = { id: removal.id, folder, validity, items, target: removal.target, unseen };
+    mail.undo = undo;
     // Once the change has reached iCloud, show it in the folder it went to, if that's open by then.
     if (removal.target) {
       setTimeout(() => {
@@ -802,15 +835,30 @@ async function undo() {
 
 let toastTimer = null;
 
-function toast(text, undoMs = 0) {
+let toastAction = null;
+
+/**
+ * A short notice at the bottom. [undoMs] offers Undo (for the last delete, move or send) for that
+ * long; [action] offers some other button instead, such as Open for a message that failed to send.
+ */
+function toast(text, undoMs = 0, action = null) {
   $("toast-text").textContent = text;
-  $("toast-undo").hidden = !undoMs;
+  toastAction = undoMs ? { label: "Undo", run: runUndo } : action;
+  $("toast-undo").textContent = toastAction ? toastAction.label : "";
+  $("toast-undo").hidden = !toastAction;
   $("toast").hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
     hideToast();
-    if (undoMs) mail.lastRemoval = null;
-  }, undoMs || 3500);
+    if (undoMs) mail.undo = null;
+  }, undoMs || (action ? 8000 : 3500));
+}
+
+/** Ctrl/Cmd+Z and the notice's Undo: takes back the last delete, move or send, while it still can. */
+function runUndo() {
+  const undo = mail.undo;
+  mail.undo = null;
+  if (undo) undo();
 }
 
 function hideToast() {
@@ -844,8 +892,14 @@ function openMenu(x, y) {
       removeSelected("move", best.folder);
     };
   }
+  const single = chosen.length === 1;
+  const writing = single
+    ? (inDrafts() ? [item("Edit draft", "↵", "editDraft"), el("hr")]
+      : [item("Reply", "R", "reply"), item("Reply all", "A", "replyAll"), item("Forward", "F", "forward"), el("hr")])
+    : [];
   const menu = $("menu");
   menu.replaceChildren(
+    ...writing,
     fileTo,
     fileTo ? el("hr") : null,
     item(anyUnread ? "Mark as read" : "Mark as unread", "U", "read"),
@@ -943,6 +997,259 @@ function onPickerKey(event) {
   }
 }
 
+// Writing
+
+const compose = {
+  draft: null, // what the server started with: reply headers, the draft it replaces, …
+  files: [], // UploadInfo of attached files
+  initialBody: "",
+  contacts: null,
+  suggest: { field: null, list: [], highlight: 0 },
+  handled: false, // set when Send, Save or Discard closes the window on purpose
+};
+
+/** Closes the compose window on purpose (sent, saved or discarded). */
+function finishCompose() {
+  compose.handled = true;
+  $("compose").close();
+}
+
+const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+/** Opens the compose window: "new", "reply", "replyAll", "forward", or "draft" to edit one. */
+async function openCompose(mode, message = null, restore = null) {
+  closeMenu();
+  try {
+    const started = restore || (await api("POST", "/api/compose/start", { mode, message, zone }));
+    compose.draft = started.draft;
+    compose.files = started.attachments;
+    compose.initialBody = restore ? "" : started.draft.body;
+    const form = $("compose-form");
+    form.elements.to.value = started.draft.to;
+    form.elements.cc.value = started.draft.cc;
+    form.elements.bcc.value = started.draft.bcc;
+    form.elements.subject.value = started.draft.subject;
+    form.elements.body.value = started.draft.body;
+    $("cc-row").hidden = !started.draft.cc && !started.draft.bcc;
+    $("bcc-row").hidden = $("cc-row").hidden;
+    $("show-cc").hidden = !$("cc-row").hidden;
+    const titles = { new: "New message", reply: "Reply", replyAll: "Reply all", forward: "Forward", draft: "Draft" };
+    $("compose-title").textContent = titles[mode] || "New message";
+    setError(form, started.warning || "");
+    renderFiles();
+    compose.handled = false;
+    $("compose").showModal();
+    // Replies start above the quote; new mail and forwards start with the address.
+    if (form.elements.to.value && mode !== "forward") {
+      form.elements.body.focus();
+      form.elements.body.setSelectionRange(0, 0);
+      form.elements.body.scrollTop = 0;
+    } else {
+      form.elements.to.focus();
+    }
+    loadContacts();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+function currentDraft() {
+  const form = $("compose-form");
+  return {
+    ...compose.draft,
+    to: form.elements.to.value,
+    cc: form.elements.cc.value,
+    bcc: form.elements.bcc.value,
+    subject: form.elements.subject.value,
+    body: form.elements.body.value,
+    attachments: compose.files.map((f) => f.id),
+  };
+}
+
+function isEmptyDraft(d) {
+  return !d.to.trim() && !d.cc.trim() && !d.bcc.trim() && !d.subject.trim() &&
+    d.body.trim() === compose.initialBody.trim() && !d.attachments.length && !compose.draft.replaces;
+}
+
+async function sendCompose() {
+  const form = $("compose-form");
+  const draft = currentDraft();
+  setError(form, "");
+  try {
+    const sending = await api("POST", "/api/compose/send", draft);
+    const files = [...compose.files];
+    finishCompose();
+    mail.undo = async () => {
+      const result = await api("POST", "/api/compose/undo", { id: sending.id }).catch(() => ({ undone: false }));
+      if (!result.undone) return toast("Too late to undo: it's on its way.");
+      openCompose(null, null, { draft, attachments: files });
+      $("compose-title").textContent = "Not sent";
+    };
+    toast("Sending…", sending.undoMs);
+    watchSend(sending.id, draft, files);
+  } catch (e) {
+    setError(form, e.message);
+  }
+}
+
+/** Follows a send until it has left or failed, and says so. */
+function watchSend(id, draft, files) {
+  const check = async () => {
+    let status;
+    try {
+      status = (await api("GET", "/api/compose/status")).find((s) => s.id === id);
+    } catch {
+      return setTimeout(check, 3000);
+    }
+    if (!status) return; // undone
+    if (status.state === "sent") {
+      if ($("toast-text").textContent === "Sending…" || $("toast").hidden) toast("Sent");
+      return;
+    }
+    if (status.state === "failed") {
+      return toast(`Couldn't send “${draft.subject || "(no subject)"}”: ${status.error}`, 0, {
+        label: "Open",
+        run: () => openCompose(null, null, { draft, attachments: files }),
+      });
+    }
+    setTimeout(check, 1500);
+  };
+  setTimeout(check, 1500);
+}
+
+/** Esc and ✕: an empty message just closes; anything else is saved to Drafts, as in the app. */
+async function closeCompose() {
+  const form = $("compose-form");
+  const draft = currentDraft();
+  if (isEmptyDraft(draft)) {
+    finishCompose();
+    api("POST", "/api/compose/discard", draft).catch(() => {});
+    return;
+  }
+  try {
+    await api("POST", "/api/compose/save", draft);
+    finishCompose();
+    toast("Saved to Drafts");
+    const current = currentFolder();
+    if (current && current.role === "drafts") softRefresh();
+  } catch (e) {
+    setError(form, `Couldn't save the draft: ${e.message}`);
+  }
+}
+
+async function discardCompose() {
+  const draft = currentDraft();
+  if (!isEmptyDraft(draft) && !confirm("Discard this message?")) return;
+  finishCompose();
+  api("POST", "/api/compose/discard", draft).catch(() => {});
+}
+
+function renderFiles() {
+  $("c-files").replaceChildren(
+    ...compose.files.map((f) => {
+      const remove = el("button", { type: "button", textContent: "✕", title: `Remove ${f.filename}` });
+      remove.setAttribute("aria-label", `Remove ${f.filename}`);
+      remove.onclick = () => {
+        compose.files = compose.files.filter((x) => x.id !== f.id);
+        api("POST", "/api/compose/upload/remove", { id: f.id }).catch(() => {});
+        renderFiles();
+      };
+      return el("li", {}, el("a", {}, el("span", { textContent: `📎 ${f.filename}` }), el("small", { textContent: formatSize(f.size) })), remove);
+    }),
+  );
+}
+
+async function attachFiles(fileList) {
+  const form = $("compose-form");
+  for (const file of fileList) {
+    try {
+      const response = await fetch("/api/compose/upload", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": file.type || "application/octet-stream", "X-Filename": encodeURIComponent(file.name) },
+        body: file,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Couldn't attach that file.");
+      compose.files.push(data);
+      renderFiles();
+    } catch (e) {
+      setError(form, `${file.name}: ${e.message}`);
+    }
+  }
+}
+
+// Address suggestions while writing
+
+async function loadContacts() {
+  if (compose.contacts) return;
+  compose.contacts = [];
+  compose.contacts = await api("GET", "/api/compose/contacts").catch(() => []);
+}
+
+function suggestFor(input) {
+  const token = input.value.slice(0, input.selectionStart).split(/[,;]/).pop().trim().toLowerCase();
+  const box = $("contact-suggest");
+  if (token.length < 2 || token.includes(">") || !compose.contacts) return hideSuggest();
+  const list = compose.contacts.filter((c) => c.address.includes(token) || c.name.toLowerCase().includes(token)).slice(0, 6);
+  if (!list.length) return hideSuggest();
+  compose.suggest = { field: input, list, highlight: 0 };
+  box.replaceChildren(
+    ...list.map((c, i) => {
+      const li = el("li", {}, el("span", { textContent: c.name || c.address }), c.name ? el("small", { textContent: c.address }) : null);
+      li.setAttribute("role", "option");
+      li.setAttribute("aria-selected", String(i === 0));
+      li.onmousedown = (event) => {
+        event.preventDefault();
+        acceptSuggestion(c);
+      };
+      return li;
+    }),
+  );
+  const dialog = $("compose").getBoundingClientRect();
+  const rect = input.getBoundingClientRect();
+  box.style.left = `${rect.left - dialog.left}px`;
+  box.style.top = `${rect.bottom - dialog.top + 4}px`;
+  box.hidden = false;
+}
+
+function hideSuggest() {
+  $("contact-suggest").hidden = true;
+  compose.suggest.field = null;
+}
+
+function acceptSuggestion(contact) {
+  const input = compose.suggest.field;
+  if (!input) return;
+  const before = input.value.slice(0, input.selectionStart);
+  const after = input.value.slice(input.selectionStart);
+  const start = Math.max(before.lastIndexOf(","), before.lastIndexOf(";")) + 1;
+  const prefix = before.slice(0, start).trimEnd();
+  const value = `${prefix ? `${prefix} ` : ""}${contact.address}, `;
+  input.value = value + after.replace(/^[^,;]*[,;]?\s*/, "");
+  input.setSelectionRange(value.length, value.length);
+  hideSuggest();
+}
+
+function onAddressKey(event) {
+  const box = $("contact-suggest");
+  if (box.hidden || compose.suggest.field !== event.target) return;
+  const { list } = compose.suggest;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    const by = event.key === "ArrowDown" ? 1 : -1;
+    compose.suggest.highlight = (compose.suggest.highlight + by + list.length) % list.length;
+    [...box.children].forEach((li, i) => li.setAttribute("aria-selected", String(i === compose.suggest.highlight)));
+  } else if (event.key === "Enter" || event.key === "Tab") {
+    acceptSuggestion(list[compose.suggest.highlight]);
+  } else if (event.key === "Escape") {
+    hideSuggest();
+  } else {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+}
+
 // Keyboard
 
 function typing(event) {
@@ -951,12 +1258,12 @@ function typing(event) {
 }
 
 function onKey(event) {
-  if ($("app").hidden || $("settings").open || $("picker").open || !$("menu").hidden || typing(event) || event.altKey) return;
+  if ($("app").hidden || $("settings").open || $("picker").open || $("compose").open || !$("menu").hidden || typing(event) || event.altKey) return;
   const command = event.metaKey || event.ctrlKey;
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
   if (command) {
     if (key === "a") selectAll();
-    else if (key === "z" && !event.shiftKey) undo();
+    else if (key === "z" && !event.shiftKey) runUndo();
     else if (key === "m" && event.shiftKey) act("move");
     else if (key === "k") openPicker("goto");
     else return;
@@ -993,8 +1300,17 @@ function onKey(event) {
     case "s":
       act("flag");
       break;
+    case "n":
+      openCompose("new");
+      break;
     case "r":
-      refresh();
+      act("reply");
+      break;
+    case "a":
+      act("replyAll");
+      break;
+    case "f":
+      act("forward");
       break;
     default:
       return;
@@ -1191,7 +1507,8 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   list.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && mail.cursor !== null) {
-      selectOnly(mail.cursor);
+      if (inDrafts() && mail.selected.size === 1 && mail.selected.has(mail.cursor)) act("editDraft");
+      else selectOnly(mail.cursor);
       event.preventDefault();
     }
   });
@@ -1211,7 +1528,83 @@ document.addEventListener("DOMContentLoaded", () => {
 
   $("picker-filter").addEventListener("input", renderPicker);
   $("picker-filter").addEventListener("keydown", onPickerKey);
-  $("toast-undo").addEventListener("click", undo);
+  $("toast-undo").addEventListener("click", () => {
+    const action = toastAction;
+    hideToast();
+    if (action) action.run();
+  });
+
+  // Writing
+  for (const id of ["new-message", "new-message-small"]) $(id).addEventListener("click", () => openCompose("new"));
+  $("compose-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    busy($("c-send"), sendCompose);
+  });
+  $("compose").addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      busy($("c-send"), sendCompose);
+    }
+  });
+  $("compose").addEventListener("cancel", (event) => {
+    // Esc closes and saves a draft, unless it was just closing the address suggestions.
+    event.preventDefault();
+    if (!$("contact-suggest").hidden) return hideSuggest();
+    closeCompose();
+  });
+  $("compose-close").addEventListener("click", closeCompose);
+  // If the browser closes the window some other way (it can insist on Esc), keep the message as a draft.
+  $("compose").addEventListener("close", () => {
+    if (compose.handled) return;
+    compose.handled = true;
+    const draft = currentDraft();
+    if (isEmptyDraft(draft)) return;
+    api("POST", "/api/compose/save", draft)
+      .then(() => toast("Saved to Drafts"))
+      .catch((e) => toast(`Couldn't save the draft: ${e.message}`, 0, { label: "Open", run: () => openCompose(null, null, { draft, attachments: compose.files }) }));
+  });
+  $("c-discard").addEventListener("click", discardCompose);
+  $("show-cc").addEventListener("click", () => {
+    $("cc-row").hidden = $("bcc-row").hidden = false;
+    $("show-cc").hidden = true;
+    $("c-cc").focus();
+  });
+  $("c-attach").addEventListener("change", (event) => {
+    attachFiles([...event.target.files]);
+    event.target.value = "";
+  });
+  const dialog = $("compose");
+  dialog.addEventListener("dragover", (event) => {
+    if (![...event.dataTransfer.types].includes("Files")) return;
+    event.preventDefault();
+    dialog.classList.add("dropping");
+  });
+  dialog.addEventListener("dragleave", (event) => {
+    if (event.target === dialog) dialog.classList.remove("dropping");
+  });
+  dialog.addEventListener("drop", (event) => {
+    event.preventDefault();
+    dialog.classList.remove("dropping");
+    attachFiles([...event.dataTransfer.files]);
+  });
+  for (const input of document.querySelectorAll("#compose input.address")) {
+    input.addEventListener("input", () => suggestFor(input));
+    input.addEventListener("keydown", onAddressKey);
+    input.addEventListener("blur", () => setTimeout(hideSuggest, 100));
+  }
+
+  $("identity-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.target;
+    busy(form.querySelector("button"), async () => {
+      try {
+        await api("POST", "/api/compose/identity", { name: form.elements.name.value, signature: form.elements.signature.value });
+        $("identity-saved").textContent = "Saved";
+      } catch (e) {
+        $("identity-saved").textContent = e.message;
+      }
+    });
+  });
 
   document.addEventListener("keydown", onKey);
 

@@ -26,6 +26,8 @@ data class Account(
     val createdAt: Long,
     /** Senders whose images from the internet load without asking, sealed with the account key. */
     val sealedImageSenders: String? = null,
+    /** The name mail is sent with and the signature, sealed with the account key. */
+    val sealedIdentity: String? = null,
 )
 
 @Serializable

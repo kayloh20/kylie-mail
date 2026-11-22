@@ -9,6 +9,9 @@ class Session(val accountKey: ByteArray, val createdAt: Long, var lastSeenAt: Lo
 
     /** Smart filing's memory, opened on first use and forgotten when the session ends. */
     @Volatile var filing: Filing? = null
+
+    /** Mail being sent, and files attached while writing. */
+    @Volatile var outbox: Outbox? = null
 }
 
 /**
@@ -54,7 +57,20 @@ class Sessions(private val now: () -> Long = System::currentTimeMillis) {
         // Filing stops first: it must never save with the key wiped below.
         session.filing?.let { runCatching { it.close() } }
         session.filing = null
-        session.mail?.let { runCatching { it.shutdown() } }
+        // Mail you pressed Send on still goes out, right away, before the connection closes.
+        val outbox = session.outbox
+        session.outbox = null
+        val mail = session.mail
+        if (mail != null) {
+            runCatching {
+                mail.shutdown {
+                    outbox?.flush()
+                    outbox?.close()
+                }
+            }
+        } else {
+            outbox?.close()
+        }
         session.mail = null
         session.accountKey.fill(0)
     }

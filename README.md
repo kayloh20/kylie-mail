@@ -20,8 +20,9 @@ suggested filing.
 
 ## On the web
 
-The web version lives in [`web/`](web/README.md) and runs on its own server. Passkey sign-in,
-reading, deleting, moving, flagging and smart filing work; writing comes next.
+The web version lives in [`web/`](web/README.md) and runs on its own server. It does what the
+app does on a big screen: passkey sign-in, reading, deleting, moving, flagging, smart filing and
+writing in plain text.
 
 ## Signing in
 

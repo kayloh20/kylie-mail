@@ -39,7 +39,7 @@ class MailFlowTest {
     private lateinit var services: Services
     private lateinit var accountKey: ByteArray
 
-    private fun server(undoMs: Long = 400, block: suspend Browser.() -> Unit) = testApplication {
+    private fun server(undoMs: Long = 400, undoSendMs: Long = 300, block: suspend Browser.() -> Unit) = testApplication {
         val dataDir = folder.root.toPath()
         val services = Services(
             config = config,
@@ -50,6 +50,8 @@ class MailFlowTest {
             mailLogin = ImapMailLogin(com.kayloh20.kyliemail.data.mail.ImapConnector(mail.server)),
             mailServer = mail.server,
             undoMs = undoMs,
+            undoSendMs = undoSendMs,
+            sentCopyDelayMs = 100,
         )
         this@MailFlowTest.services = services
         val prf = Crypto.randomBytes(32)
@@ -63,7 +65,7 @@ class MailFlowTest {
         Browser(this, token).block()
     }
 
-    inner class Browser(private val app: ApplicationTestBuilder, var token: String?) {
+    inner class Browser(val app: ApplicationTestBuilder, var token: String?) {
         suspend fun get(path: String): HttpResponse = app.client.get(path) {
             token?.let { header(HttpHeaders.Cookie, "$SESSION_COOKIE=$it") }
         }
@@ -109,7 +111,7 @@ class MailFlowTest {
     @Test
     fun foldersAndMessages() = server {
         val folders = folders()
-        assertEquals(listOf("Inbox", "Archive", "Trash", "Receipts"), folders.map { it.name })
+        assertEquals(listOf("Inbox", "Drafts", "Sent", "Archive", "Trash", "Receipts"), folders.map { it.name })
         assertEquals("inbox", folders[0].role)
         assertEquals(4, folders[0].unread)
 
@@ -258,7 +260,7 @@ class MailFlowTest {
         val trash = page("Deleted Messages")
         assertEquals(null, remove(trash, listOf(trash.messages[0].uid), "delete").read(Removal.serializer()).target)
         eventually("it's gone for good") { subjects("Deleted Messages").isEmpty() }
-        assertEquals(listOf(3, 0, 0, 5), folders().map { it.total })
+        assertEquals(listOf(3, 0, 0, 0, 0, 5), folders().map { it.total })
     }
 
     @Test
@@ -384,5 +386,174 @@ class MailFlowTest {
         val after = filing()
         assertEquals(0, after.examples)
         assertTrue(after.folders.none { it.trained })
+    }
+
+    // Writing
+
+    private suspend fun Browser.start(mode: String, page: MessagePage? = null, uid: Long? = null): Started {
+        val message = if (page != null && uid != null) ""","message":{"folder":"${page.folder}","validity":${page.validity},"uid":$uid}""" else ""
+        return post("/api/compose/start", """{"mode":"$mode","zone":"America/Los_Angeles"$message}""").read(Started.serializer())
+    }
+
+    private val wire = Json { encodeDefaults = true }
+
+    private suspend fun Browser.send(draft: Draft): Sending =
+        post("/api/compose/send", wire.encodeToString(Draft.serializer(), draft)).read(Sending.serializer())
+
+    private suspend fun Browser.statusOf(id: String) =
+        get("/api/compose/status").read(ListSerializer(SendStatus.serializer())).firstOrNull { it.id == id }
+
+    @Test
+    fun repliesGoOutAsPlainTextAndLandInSent() = server {
+        val inbox = inbox()
+        val mom = inbox.messages.first { it.subject == "Dinner Sunday?" }
+        val started = start("reply", inbox, mom.uid)
+        assertEquals("mom@example.org", started.draft.to)
+        assertEquals("Re: Dinner Sunday?", started.draft.subject)
+        assertTrue("wrote:\n> Are you coming for dinner on Sunday?" in started.draft.body, started.draft.body)
+        assertTrue(started.draft.inReplyTo!!.startsWith("<"))
+
+        val sending = send(started.draft.copy(body = "Yes! <b>This</b> stays text.\n" + started.draft.body))
+        eventually("it's sent") { statusOf(sending.id)?.state == "sent" }
+
+        val received = mail.receivedAt("example.org").single()
+        val raw = mail.raw(received)
+        assertTrue(received.isMimeType("text/plain"), received.contentType)
+        assertFalse("text/html" in raw.lowercase(), raw)
+        assertTrue("<b>This</b> stays text." in (received.content as String))
+        assertEquals(started.draft.inReplyTo, received.getHeader("In-Reply-To").single())
+
+        eventually("a copy is filed in Sent") { subjects("Sent Messages") == listOf("Re: Dinner Sunday?") }
+        eventually("the original is marked answered") { inbox().messages.first { it.uid == mom.uid }.answered }
+    }
+
+    @Test
+    fun undoSendKeepsItFromLeaving() = server(undoSendMs = 2_000) {
+        val sending = send(Draft(to = "friend@example.org", subject = "Oops", body = "Wrong person"))
+        assertEquals("waiting", statusOf(sending.id)?.state)
+        assertEquals(UndoReply(true), post("/api/compose/undo", """{"id":"${sending.id}"}""").read(UndoReply.serializer()))
+        kotlinx.coroutines.delay(2_500)
+        assertEquals(emptyList(), mail.receivedAt("example.org"))
+        assertEquals(null, statusOf(sending.id))
+    }
+
+    @Test
+    fun bccStaysHidden() = server {
+        val sending = send(Draft(to = "a@example.org", bcc = "secret@example.net", subject = "Party", body = "Shh"))
+        eventually("it's sent") { statusOf(sending.id)?.state == "sent" }
+        // One copy each for the To and Bcc recipients...
+        val delivered = mail.received()
+        assertEquals(2, delivered.size)
+        // ...and none of them says who else got it secretly, not even the Bcc recipient's own.
+        for (copy in delivered) assertFalse("secret@example.net" in mail.raw(copy), mail.raw(copy))
+    }
+
+    @Test
+    fun forwardsCarryTheAttachmentsAndStillNoHtmlBody() = server {
+        val inbox = inbox()
+        val order = inbox.messages.first { it.subject == "Your order has shipped" }
+        val started = start("forward", inbox, order.uid)
+        assertEquals("Fwd: Your order has shipped", started.draft.subject)
+        assertTrue("---------- Forwarded message ----------" in started.draft.body)
+        assertTrue(started.attachments.map { it.filename }.containsAll(listOf("receipt.pdf", "invoice.html")), started.attachments.toString())
+
+        val sending = send(started.draft.copy(to = "friend@example.org"))
+        eventually("it's sent") { statusOf(sending.id)?.state == "sent" }
+        val received = mail.receivedAt("example.org").single()
+        val parts = received.content as javax.mail.Multipart
+        assertTrue(parts.getBodyPart(0).isMimeType("text/plain"), "the message itself is plain text")
+        val files = (1 until parts.count).map { parts.getBodyPart(it) }
+        assertTrue(files.all { it.disposition == javax.mail.Part.ATTACHMENT }, "everything else is an attached file")
+        assertTrue(files.map { it.fileName }.containsAll(listOf("receipt.pdf", "invoice.html")))
+    }
+
+    @Test
+    fun attachingAFile() = server {
+        val upload = app.client.post("/api/compose/upload") {
+            header(HttpHeaders.Origin, config.origin)
+            token?.let { header(HttpHeaders.Cookie, "$SESSION_COOKIE=$it") }
+            header("X-Filename", "Pep%20rally%20plan.txt")
+            contentType(ContentType.Text.Plain)
+            setBody("Bring pom-poms".toByteArray())
+        }.read(UploadInfo.serializer())
+        assertEquals("Pep rally plan.txt", upload.filename)
+        val sending = send(Draft(to = "squad@example.org", subject = "Plan", body = "Attached.", attachments = listOf(upload.id)))
+        eventually("it's sent") { statusOf(sending.id)?.state == "sent" }
+        val parts = mail.receivedAt("example.org").single().content as javax.mail.Multipart
+        assertEquals("Pep rally plan.txt", parts.getBodyPart(1).fileName)
+
+        val huge = app.client.post("/api/compose/upload") {
+            header(HttpHeaders.Origin, config.origin)
+            token?.let { header(HttpHeaders.Cookie, "$SESSION_COOKIE=$it") }
+            setBody(ByteArray(15 * 1024 * 1024))
+        }
+        assertEquals(HttpStatusCode.PayloadTooLarge, huge.status)
+        assertEquals(HttpStatusCode.BadRequest, post("/api/compose/send", wire.encodeToString(Draft.serializer(), Draft(to = "x@example.org", attachments = listOf("gone")))).status)
+    }
+
+    @Test
+    fun draftsAreSavedEditedAndReplaced() = server {
+        post("/api/compose/save", wire.encodeToString(Draft.serializer(), Draft(to = "mom@example.org", subject = "Thanksgiving", body = "Half-written"))).read(Done.serializer())
+        assertEquals(listOf("Thanksgiving"), subjects("Drafts"))
+
+        val drafts = page("Drafts")
+        val editing = start("draft", drafts, drafts.messages[0].uid).draft
+        assertEquals("mom@example.org", editing.to)
+        assertEquals("Half-written", editing.body.trim())
+        assertEquals(drafts.messages[0].uid, editing.replaces!!.uid)
+
+        // Saving again replaces it rather than adding another.
+        post("/api/compose/save", wire.encodeToString(Draft.serializer(), editing.copy(body = "Almost done"))).read(Done.serializer())
+        assertEquals(listOf("Thanksgiving"), subjects("Drafts"))
+
+        // Sending it removes the draft.
+        val latest = page("Drafts")
+        val final = start("draft", latest, latest.messages[0].uid).draft
+        val sending = send(final.copy(body = "Done!"))
+        eventually("it's sent and the draft is gone") { statusOf(sending.id)?.state == "sent" && subjects("Drafts").isEmpty() }
+    }
+
+    @Test
+    fun nameAndSignatureAreSealedAndUsed() = server {
+        post("/api/compose/identity", """{"name":"Kylie","signature":"xoxo, K"}""").read(Done.serializer())
+        assertEquals(Identity("Kylie", "xoxo, K"), get("/api/compose/identity").read(Identity.serializer()))
+        assertFalse("xoxo" in folder.root.resolve("account.json").readText(), "sealed on disk")
+
+        val fresh = start("new").draft
+        assertEquals("\n\n-- \nxoxo, K", fresh.body)
+        val sending = send(fresh.copy(to = "mom@example.org", subject = "Hi", body = "Hi Mom" + fresh.body))
+        eventually("it's sent") { statusOf(sending.id)?.state == "sent" }
+        val received = mail.receivedAt("example.org").single()
+        assertEquals("Kylie <kylie@icloud.com>", received.getHeader("From").single())
+    }
+
+    @Test
+    fun badAddressesAreExplained() = server {
+        val reply = post("/api/compose/send", wire.encodeToString(Draft.serializer(), Draft(to = "mom@", subject = "x")))
+        assertEquals(HttpStatusCode.BadRequest, reply.status)
+        assertTrue("To field" in reply.bodyAsText(), reply.bodyAsText())
+        assertEquals(HttpStatusCode.BadRequest, post("/api/compose/send", wire.encodeToString(Draft.serializer(), Draft(subject = "x"))).status)
+    }
+
+    @Test
+    fun repliesCanNotSmuggleHeaders() = server {
+        val sending = send(Draft(to = "mom@example.org", subject = "Hi", body = "x", inReplyTo = "<a@b>\r\nBcc: spy@example.net"))
+        eventually("it's sent") { statusOf(sending.id)?.state == "sent" }
+        assertEquals(emptyList(), mail.receivedAt("example.net"))
+        assertEquals(1, mail.raw(mail.receivedAt("example.org").single()).lines().count { it.startsWith("In-Reply-To:") })
+    }
+
+    @Test
+    fun signingOutStillSendsWhatWasSent() = server(undoSendMs = 60_000) {
+        send(Draft(to = "mom@example.org", subject = "Before I go", body = "Bye"))
+        post("/api/signout", "{}")
+        eventually("it goes out right away") { mail.receivedAt("example.org").size == 1 }
+    }
+
+    @Test
+    fun contactsComeFromRecentMail() = server {
+        val contacts = get("/api/compose/contacts").read(ListSerializer(Contact.serializer()))
+        assertTrue(Contact("Mom", "mom@example.org") in contacts, contacts.toString())
+        assertTrue(Contact("Shop", "orders@shop.example") in contacts, contacts.toString())
     }
 }

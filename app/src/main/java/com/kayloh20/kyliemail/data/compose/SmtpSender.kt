@@ -14,9 +14,12 @@ class SmtpSender(private val server: ServerConfig = ServerConfig.ICLOUD) {
             put("mail.smtp.port", server.smtpPort.toString())
             put("mail.smtp.auth", "true")
             // Port 587 starts plain and upgrades; refusing to continue without the upgrade keeps passwords off the wire.
-            put("mail.smtp.starttls.enable", "true")
-            put("mail.smtp.starttls.required", "true")
-            put("mail.smtp.ssl.checkserveridentity", "true")
+            // Only local test servers, which have no certificate, turn TLS off (see ServerConfig.tls).
+            if (server.tls) {
+                put("mail.smtp.starttls.enable", "true")
+                put("mail.smtp.starttls.required", "true")
+                put("mail.smtp.ssl.checkserveridentity", "true")
+            }
             put("mail.smtp.connectiontimeout", "20000")
             put("mail.smtp.timeout", "60000")
             put("mail.smtp.writetimeout", "60000")

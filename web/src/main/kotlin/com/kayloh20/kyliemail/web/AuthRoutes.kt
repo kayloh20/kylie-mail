@@ -2,6 +2,7 @@ package com.kayloh20.kyliemail.web
 
 import com.kayloh20.kyliemail.web.Crypto.b64url
 import com.kayloh20.kyliemail.web.Crypto.fromB64url
+import com.kayloh20.kyliemail.data.compose.SmtpSender
 import com.kayloh20.kyliemail.data.mail.ServerConfig
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -46,7 +47,28 @@ class Services(
     val now: () -> Long = System::currentTimeMillis,
     val mailServer: ServerConfig = ServerConfig.ICLOUD,
     val undoMs: Long = MailClient.UNDO_MS,
+    val undoSendMs: Long = Outbox.UNDO_SEND_MS,
+    val sentCopyDelayMs: Long = Outbox.SENT_COPY_DELAY_MS,
 ) {
+    /** The session's outgoing mail, made on first use. */
+    fun outbox(session: Session): Outbox {
+        val mail = mail(session)
+        return synchronized(session) {
+            session.outbox ?: run {
+                val account = vault.account() ?: throw ApiError(HttpStatusCode.Conflict, "Kylie Mail isn't set up yet.")
+                Outbox(
+                    mail,
+                    SmtpSender(mailServer),
+                    account.username,
+                    account.email,
+                    { vault.identity(session.accountKey) },
+                    undoSendMs,
+                    sentCopyDelayMs,
+                ).also { session.outbox = it }
+            }
+        }
+    }
+
     private val filingStore by lazy { FilingStore(java.nio.file.Path.of(config.dataDir).resolve("filing.sealed")) }
 
     /** The session's smart filing, opened on first use; it also picks up mail filed since last time. */

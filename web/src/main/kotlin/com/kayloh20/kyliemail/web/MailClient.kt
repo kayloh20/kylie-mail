@@ -34,6 +34,8 @@ import javax.mail.Part
 import javax.mail.StoreClosedException
 import javax.mail.UIDFolder
 import javax.mail.internet.InternetAddress
+import javax.mail.internet.MimeMessage
+import javax.mail.search.MessageIDTerm
 
 @Serializable data class FolderInfo(val id: String, val name: String, val role: String, val depth: Int, val unread: Int, val total: Int)
 
@@ -95,7 +97,18 @@ private class PendingRemoval(
 )
 
 /** A message read and parsed for display, kept briefly so loading its images doesn't fetch it again. */
-class OpenedMessage(val summary: MessageSummary, val to: List<String>, val cc: List<String>, val replyTo: List<String>, val body: ParsedBody)
+class OpenedMessage(
+    val summary: MessageSummary,
+    val to: List<String>,
+    val cc: List<String>,
+    val replyTo: List<String>,
+    val body: ParsedBody,
+    /** The original's Message-ID header, which a reply refers to. */
+    val messageIdHeader: String? = null,
+)
+
+/** Someone you've exchanged mail with, for suggestions while writing. */
+@Serializable data class Contact(val name: String, val address: String)
 
 class Download(val filename: String, val mimeType: String, val bytes: ByteArray)
 
@@ -187,7 +200,14 @@ class MailClient(
         val message = run { store ->
             val f = open(store, folderId, validity)
             val m = f.getMessageByUID(uid) ?: throw ApiError(HttpStatusCode.NotFound, "That message is gone. It may have been moved or deleted.")
-            OpenedMessage(summary(f, m), list(m.getRecipients(Message.RecipientType.TO)), list(m.getRecipients(Message.RecipientType.CC)), list(m.replyTo), BodyParser.parse(m))
+            OpenedMessage(
+                summary(f, m),
+                list(m.getRecipients(Message.RecipientType.TO)),
+                list(m.getRecipients(Message.RecipientType.CC)),
+                list(m.replyTo),
+                BodyParser.parse(m),
+                m.getHeader("Message-ID")?.firstOrNull()?.trim(),
+            )
         }
         synchronized(opened) { opened[key] = message }
         return message
@@ -226,6 +246,74 @@ class MailClient(
         val name = target?.let { t -> knownFolders.find { it.id == t }?.name ?: t.substringAfterLast('/') }
         return Removal(removal.id, uids.size, target, name, undoMs) to features
     }
+
+    /** Adds [message] to [folderId] with [flags], such as a copy in Sent or a saved draft. */
+    suspend fun append(folderId: String, message: MimeMessage, flags: Flags) = run { store ->
+        val f = store.getFolder(folderId)
+        if (!f.exists()) throw ApiError(HttpStatusCode.NotFound, "There's no ${folderId.substringAfterLast('/')} folder.")
+        message.setFlags(flags, true)
+        f.appendMessages(arrayOf(message))
+        synchronized(opened) { opened.keys.removeIf { it.startsWith("$folderId\u0000") } }
+    }
+
+    /** Whether [folderId] holds a message with this Message-ID header. */
+    suspend fun hasMessageId(folderId: String, messageId: String): Boolean = run { store ->
+        if (!store.getFolder(folderId).exists()) return@run false
+        open(store, folderId).search(MessageIDTerm(messageId)).isNotEmpty()
+    }
+
+    /** Removes one message for good, such as a draft that has been sent or saved again. */
+    suspend fun deleteForGood(folderId: String, validity: Long, uid: Long) = run { store ->
+        val f = open(store, folderId, validity)
+        val message = f.getMessageByUID(uid) ?: return@run
+        message.setFlag(Flags.Flag.DELETED, true)
+        if (store.hasCapability("UIDPLUS")) f.expunge(arrayOf(message)) else f.expunge()
+        synchronized(opened) { opened.keys.removeIf { it.startsWith("$folderId\u0000") } }
+    }
+
+    /**
+     * People you've exchanged mail with: who wrote to you lately and who you wrote to, most
+     * frequent first. Read once per session, kept in memory only.
+     */
+    suspend fun contacts(): List<Contact> {
+        contactCache?.let { return it }
+        val folders = knownFolders()
+        val counts = LinkedHashMap<String, Pair<String, Int>>()
+        fun add(address: InternetAddress) {
+            val key = address.address?.lowercase()?.takeIf { it.contains('@') } ?: return
+            val (name, n) = counts[key] ?: ("" to 0)
+            counts[key] = (address.personal?.takeIf { it.isNotBlank() } ?: name) to n + 1
+        }
+        for ((role, types) in listOf(
+            "inbox" to listOf<Message.RecipientType?>(null),
+            "sent" to listOf(Message.RecipientType.TO, Message.RecipientType.CC),
+        )) {
+            val folder = folders.find { it.role == role } ?: continue
+            runCatching {
+                run { store ->
+                    val f = open(store, folder.id)
+                    val count = f.messageCount
+                    if (count < 1) return@run
+                    val messages = f.getMessages(maxOf(1, count - CONTACT_DEPTH + 1), count)
+                    f.fetch(messages, FetchProfile().apply { add(FetchProfile.Item.ENVELOPE) })
+                    for (m in messages) {
+                        for (type in types) {
+                            val addresses = if (type == null) m.from else m.getRecipients(type)
+                            addresses?.forEach { (it as? InternetAddress)?.let(::add) }
+                        }
+                    }
+                }
+            }
+        }
+        return counts.entries.sortedByDescending { it.value.second }
+            .map { Contact(it.value.first, it.key) }
+            .also { contactCache = it }
+    }
+
+    @Volatile private var contactCache: List<Contact>? = null
+
+    /** The password, for sending mail with the same account. */
+    fun passwordForSending(): String? = passwordOverride ?: password()
 
     /** Sender, recipients and subject of [uids], for smart filing. */
     suspend fun features(folderId: String, validity: Long, uids: List<Long>): List<MessageFeatures> = run { store ->
@@ -353,12 +441,13 @@ class MailClient(
      * deleting something still deletes it. Reads the password first, since the session forgets
      * its key as soon as this returns.
      */
-    fun shutdown() {
+    fun shutdown(first: suspend () -> Unit = {}) {
         passwordOverride = runCatching { password() }.getOrNull()
         val waiting = synchronized(pending) { pending.values.toList() }
         waiting.forEach { it.job?.cancel() }
         scope.launch {
             try {
+                runCatching { first() }
                 for (removal in waiting) send(removal.id)
             } finally {
                 passwordOverride = null
@@ -467,6 +556,9 @@ class MailClient(
         const val MAX_DOWNLOAD = 60L * 1024 * 1024
         /** How long a removal waits before going to iCloud, as in the app. */
         const val UNDO_MS = 6_000L
+
+        /** How many recent messages in Inbox and Sent contacts are gathered from. */
+        private const val CONTACT_DEPTH = 500
 
         /** How many messages one training read fetches before letting other requests through. */
         private const val CHUNK = 250

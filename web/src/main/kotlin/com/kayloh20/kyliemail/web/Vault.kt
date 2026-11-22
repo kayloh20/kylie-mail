@@ -117,6 +117,21 @@ class Vault(private val store: AccountStore, private val now: () -> Long = Syste
         store.update { it.copy(sealedImageSenders = b64url(sealed)) }
     }
 
+    /** The name to send mail as and the signature, both empty until set. */
+    fun identity(accountKey: ByteArray): Pair<String, String> {
+        val sealed = store.get()?.sealedIdentity ?: return "" to ""
+        val text = Crypto.open(accountKey, fromB64url(sealed), IDENTITY_AD)?.toString(Charsets.UTF_8) ?: return "" to ""
+        return text.substringBefore('\u0000') to text.substringAfter('\u0000', "")
+    }
+
+    fun setIdentity(accountKey: ByteArray, name: String, signature: String) {
+        requireKey(accountKey)
+        val cleanName = name.filter { !it.isISOControl() }.trim().take(100)
+        val cleanSignature = signature.replace("\r\n", "\n").filter { it == '\n' || !it.isISOControl() }.take(2000)
+        val sealed = Crypto.seal(accountKey, "$cleanName\u0000$cleanSignature".toByteArray(Charsets.UTF_8), IDENTITY_AD)
+        store.update { it.copy(sealedIdentity = b64url(sealed)) }
+    }
+
     private fun requireKey(accountKey: ByteArray) {
         require(password(accountKey) != null) { "Wrong account key" }
     }
@@ -156,6 +171,7 @@ class Vault(private val store: AccountStore, private val now: () -> Long = Syste
     private companion object {
         const val PASSWORD_AD = "icloud-password"
         const val IMAGE_SENDERS_AD = "image-senders"
+        const val IDENTITY_AD = "identity"
     }
 }
 
