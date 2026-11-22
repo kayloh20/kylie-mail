@@ -14,12 +14,25 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
+import com.kayloh20.kyliemail.data.mail.FolderRole
 import kotlinx.serialization.Serializable
+import javax.mail.Flags
 
 const val EMAIL_BODY_PATH = "/api/message/body"
 const val ATTACHMENT_PATH = "/api/message/attachment"
 
-@Serializable data class SeenBody(val folder: String, val validity: Long, val uids: List<Long>, val seen: Boolean)
+@Serializable data class FlagBody(val folder: String, val validity: Long, val uids: List<Long>, val flag: String, val value: Boolean)
+@Serializable data class RemoveBody(
+    val folder: String,
+    val validity: Long,
+    val uids: List<Long>,
+    /** "delete", "archive" or "move". */
+    val action: String,
+    /** The destination folder, for "move". */
+    val target: String? = null,
+)
+@Serializable data class UndoBody(val id: String)
+@Serializable data class UndoReply(val undone: Boolean)
 @Serializable data class TrustBody(val address: String)
 @Serializable data class Done(val ok: Boolean = true)
 
@@ -82,12 +95,40 @@ fun Route.mailRoutes(services: Services) = route("/api") {
         call.respondBytes(download.bytes, ContentType.Application.OctetStream)
     }
 
-    post("/messages/seen") {
+    post("/messages/flags") {
         val session = call.requireSession(services)
-        val body = call.receive<SeenBody>()
-        if (body.uids.size > 500) throw ApiError(HttpStatusCode.BadRequest, "Too many messages at once.")
-        services.mail(session).setSeen(body.folder, body.validity, body.uids, body.seen)
+        val body = call.receive<FlagBody>()
+        checkCount(body.uids)
+        val flag = when (body.flag) {
+            "seen" -> Flags.Flag.SEEN
+            "flagged" -> Flags.Flag.FLAGGED
+            else -> throw ApiError(HttpStatusCode.BadRequest, "Unknown flag.")
+        }
+        services.mail(session).setFlag(body.folder, body.validity, body.uids, flag, body.value)
         call.respond(Done())
+    }
+
+    // Delete, archive and move, with a few seconds to undo (see MailClient.remove).
+    post("/messages/remove") {
+        val session = call.requireSession(services)
+        val body = call.receive<RemoveBody>()
+        checkCount(body.uids)
+        val mail = services.mail(session)
+        val source = mail.roleOf(body.folder)
+        val target = when (body.action) {
+            // Deleting from Trash, or when there's no Trash, deletes for good, as in the app.
+            "delete" -> mail.folderWithRole(FolderRole.TRASH)?.id?.takeIf { source != FolderRole.TRASH }
+            "archive" -> mail.folderWithRole(FolderRole.ARCHIVE)?.id?.takeIf { source != FolderRole.ARCHIVE }
+                ?: throw ApiError(HttpStatusCode.BadRequest, "There's no Archive folder to move them to.")
+            "move" -> body.target?.takeIf { it.isNotEmpty() } ?: throw ApiError(HttpStatusCode.BadRequest, "Choose a folder.")
+            else -> throw ApiError(HttpStatusCode.BadRequest, "Unknown action.")
+        }
+        call.respond(mail.remove(body.folder, body.validity, body.uids, target))
+    }
+
+    post("/messages/undo") {
+        val session = call.requireSession(services)
+        call.respond(UndoReply(services.mail(session).undo(call.receive<UndoBody>().id)))
     }
 
     post("/image-senders") {
@@ -95,6 +136,11 @@ fun Route.mailRoutes(services: Services) = route("/api") {
         services.vault.trustImageSender(session.accountKey, call.receive<TrustBody>().address)
         call.respond(Done())
     }
+}
+
+private fun checkCount(uids: List<Long>) {
+    if (uids.isEmpty()) throw ApiError(HttpStatusCode.BadRequest, "No messages chosen.")
+    if (uids.size > 1000) throw ApiError(HttpStatusCode.BadRequest, "Too many messages at once.")
 }
 
 private fun cleaned(opened: OpenedMessage, allowImages: Boolean): SafeEmail {

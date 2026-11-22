@@ -9,7 +9,13 @@ import com.kayloh20.kyliemail.data.mail.ServerConfig
 import com.sun.mail.imap.IMAPFolder
 import com.sun.mail.imap.IMAPStore
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -67,6 +73,27 @@ import javax.mail.internet.InternetAddress
     val imagesAllowed: Boolean,
 )
 
+@Serializable data class Removal(
+    val id: String,
+    val count: Int,
+    /** Where the messages go, or null when they're deleted for good. */
+    val target: String?,
+    val targetName: String?,
+    /** How long Undo works, in milliseconds. */
+    val undoMs: Long,
+)
+
+/** Messages leaving a folder, held for a moment so the change can be undone. */
+private class PendingRemoval(
+    val id: String,
+    val folder: String,
+    val validity: Long,
+    val uids: Set<Long>,
+    val target: String?,
+    val unseen: Int,
+    var job: Job? = null,
+)
+
 /** A message read and parsed for display, kept briefly so loading its images doesn't fetch it again. */
 class OpenedMessage(val summary: MessageSummary, val to: List<String>, val cc: List<String>, val replyTo: List<String>, val body: ParsedBody)
 
@@ -80,11 +107,17 @@ class MailClient(
     private val username: String,
     private val password: () -> String?,
     server: ServerConfig = ServerConfig.ICLOUD,
+    /** How long removals wait before going to iCloud. */
+    private val undoMs: Long = UNDO_MS,
 ) : AutoCloseable {
     private val connector = ImapConnector(server)
     private val lock = Mutex()
     private var store: IMAPStore? = null
     private var folder: IMAPFolder? = null
+    private var passwordOverride: String? = null
+    private var knownFolders: List<FolderInfo> = emptyList()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val pending = LinkedHashMap<String, PendingRemoval>()
     private val opened = object : LinkedHashMap<String, OpenedMessage>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, OpenedMessage>) = size > 20
     }
@@ -105,6 +138,22 @@ class MailClient(
                 )
             }
             .sortedWith(compareBy({ FolderRole.valueOf(it.role.uppercase()).sortOrder }, { it.id.lowercase() }))
+            .also { knownFolders = it }
+    }.let(::withPendingCounts)
+
+    /** Counts as they'll be once the changes waiting to be sent have gone through. */
+    private fun withPendingCounts(folders: List<FolderInfo>): List<FolderInfo> {
+        val waiting = synchronized(pending) { pending.values.toList() }
+        if (waiting.isEmpty()) return folders
+        return folders.map { f ->
+            var unread = f.unread
+            var total = f.total
+            for (p in waiting) {
+                if (p.folder == f.id) { unread -= p.unseen; total -= p.uids.size }
+                if (p.target == f.id) { unread += p.unseen; total += p.uids.size }
+            }
+            f.copy(unread = unread.coerceAtLeast(0), total = total.coerceAtLeast(0))
+        }
     }
 
     /** Up to [size] messages, newest first, older than message number [before]. */
@@ -120,11 +169,14 @@ class MailClient(
             add(FetchProfile.Item.CONTENT_INFO)
             add(UIDFolder.FetchProfileItem.UID)
         })
+        val leaving = synchronized(pending) {
+            pending.values.filter { it.folder == folderId && it.validity == f.uidValidity }.flatMap { it.uids }.toSet()
+        }
         MessagePage(
             folder = folderId,
             validity = f.uidValidity,
-            total = count,
-            messages = messages.reversed().map { summary(f, it) },
+            total = count - leaving.size,
+            messages = messages.reversed().map { summary(f, it) }.filter { it.uid !in leaving },
             before = start.takeIf { it > 1 && end >= 1 },
         )
     }
@@ -141,10 +193,83 @@ class MailClient(
         return message
     }
 
-    suspend fun setSeen(folderId: String, validity: Long, uids: List<Long>, seen: Boolean) = run { store ->
+    suspend fun setFlag(folderId: String, validity: Long, uids: List<Long>, flag: Flags.Flag, value: Boolean) = run { store ->
         val f = open(store, folderId, validity)
         val messages = f.getMessagesByUID(uids.toLongArray()).filterNotNull().toTypedArray()
-        if (messages.isNotEmpty()) f.setFlags(messages, Flags(Flags.Flag.SEEN), seen)
+        if (messages.isNotEmpty()) f.setFlags(messages, Flags(flag), value)
+        synchronized(opened) { opened.keys.removeIf { it.startsWith("$folderId\u0000$validity\u0000") } }
+    }
+
+    /**
+     * Takes messages out of a folder: into [target], or deleted for good when it's null. Nothing
+     * changes on iCloud for [UNDO_MS], so [undo] can still take it back; until then the folder lists
+     * and counts already look as they will afterwards.
+     */
+    suspend fun remove(folderId: String, validity: Long, uids: List<Long>, target: String?): Removal {
+        if (uids.isEmpty()) throw ApiError(HttpStatusCode.BadRequest, "No messages chosen.")
+        if (target == folderId) throw ApiError(HttpStatusCode.BadRequest, "They're already in that folder.")
+        val unseen = run { store ->
+            if (target != null && !store.getFolder(target).exists()) throw ApiError(HttpStatusCode.NotFound, "That folder doesn't exist any more.")
+            val f = open(store, folderId, validity)
+            val messages = f.getMessagesByUID(uids.toLongArray()).filterNotNull()
+            if (messages.isEmpty()) throw ApiError(HttpStatusCode.NotFound, "Those messages are gone.")
+            messages.count { !it.isSet(Flags.Flag.SEEN) }
+        }
+        val removal = PendingRemoval(Crypto.b64url(Crypto.randomBytes(12)), folderId, validity, uids.toSet(), target, unseen)
+        synchronized(pending) {
+            pending[removal.id] = removal
+            removal.job = scope.launch {
+                delay(undoMs)
+                send(removal.id)
+            }
+        }
+        val name = target?.let { t -> knownFolders.find { it.id == t }?.name ?: t.substringAfterLast('/') }
+        return Removal(removal.id, uids.size, target, name, undoMs)
+    }
+
+    /** Takes back a removal that hasn't been sent yet. False once it has. */
+    fun undo(id: String): Boolean = synchronized(pending) {
+        val removal = pending.remove(id) ?: return false
+        removal.job?.cancel()
+        true
+    }
+
+    /** The folder Delete and Archive move to, from the folders seen so far. */
+    suspend fun folderWithRole(role: FolderRole): FolderInfo? {
+        if (knownFolders.isEmpty()) folders()
+        return knownFolders.find { it.role == role.name.lowercase() }
+    }
+
+    suspend fun roleOf(folderId: String): FolderRole {
+        if (knownFolders.isEmpty()) folders()
+        return knownFolders.find { it.id == folderId }?.role?.let { FolderRole.valueOf(it.uppercase()) } ?: FolderRole.CUSTOM
+    }
+
+    /** Sends a waiting removal to iCloud now. */
+    private suspend fun send(id: String) {
+        val removal = synchronized(pending) { pending.remove(id) } ?: return
+        try {
+            run { store ->
+                val f = open(store, removal.folder, removal.validity)
+                val messages = f.getMessagesByUID(removal.uids.toLongArray()).filterNotNull().toTypedArray()
+                if (messages.isEmpty()) return@run
+                val target = removal.target
+                if (target != null) {
+                    val destination = store.getFolder(target)
+                    if (store.hasCapability("MOVE")) {
+                        f.moveMessages(messages, destination)
+                        return@run
+                    }
+                    f.copyMessages(messages, destination)
+                }
+                f.setFlags(messages, Flags(Flags.Flag.DELETED), true)
+                // Without UIDPLUS, expunging can only clear every deleted message in the folder.
+                if (store.hasCapability("UIDPLUS")) f.expunge(messages) else f.expunge()
+            }
+        } catch (e: Exception) {
+            System.err.println("Couldn't send a change to iCloud: ${e::class.simpleName}")
+        }
+        synchronized(opened) { opened.keys.removeIf { it.startsWith("${removal.folder}\u0000") } }
     }
 
     suspend fun attachment(folderId: String, validity: Long, uid: Long, path: String): Download = run { store ->
@@ -161,6 +286,26 @@ class MailClient(
         store = null
         folder = null
         s?.let(connector::kill)
+    }
+
+    /**
+     * Ends this connection after sending every change still waiting, so signing out right after
+     * deleting something still deletes it. Reads the password first, since the session forgets
+     * its key as soon as this returns.
+     */
+    fun shutdown() {
+        passwordOverride = runCatching { password() }.getOrNull()
+        val waiting = synchronized(pending) { pending.values.toList() }
+        waiting.forEach { it.job?.cancel() }
+        scope.launch {
+            try {
+                for (removal in waiting) send(removal.id)
+            } finally {
+                passwordOverride = null
+                close()
+                scope.cancel()
+            }
+        }
     }
 
     /** Runs [block] on the IMAP connection, reconnecting once if it had dropped. */
@@ -188,7 +333,7 @@ class MailClient(
     private fun connected(): IMAPStore {
         store?.takeIf { it.isConnected }?.let { return it }
         close()
-        val pw = password() ?: throw ApiError(HttpStatusCode.Unauthorized, "Sign in again.")
+        val pw = passwordOverride ?: password() ?: throw ApiError(HttpStatusCode.Unauthorized, "Sign in again.")
         return connector.connect(username, pw).also { store = it }
     }
 
@@ -260,6 +405,8 @@ class MailClient(
 
     companion object {
         const val MAX_DOWNLOAD = 60L * 1024 * 1024
+        /** How long a removal waits before going to iCloud, as in the app. */
+        const val UNDO_MS = 6_000L
     }
 }
 

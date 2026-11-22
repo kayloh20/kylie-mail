@@ -48,7 +48,7 @@ class Sessions(private val now: () -> Long = System::currentTimeMillis) {
     /** Removes a session by its hashed key and wipes its copy of the account key. */
     private fun drop(k: String) {
         val session = sessions.remove(k) ?: return
-        session.mail?.let { runCatching { it.close() } }
+        session.mail?.let { runCatching { it.shutdown() } }
         session.mail = null
         session.accountKey.fill(0)
     }

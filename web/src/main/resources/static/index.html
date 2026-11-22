@@ -109,9 +109,20 @@
       <p>Select a message to read it.</p>
       <p class="note"><kbd>↑</kbd> <kbd>↓</kbd> or <kbd>J</kbd> <kbd>K</kbd> to move, <kbd>Esc</kbd> to close</p>
     </div>
+    <div id="toolbar" class="toolbar" role="toolbar" aria-label="Message actions" hidden>
+      <button type="button" id="back" class="link back">‹ Back</button>
+      <button type="button" data-act="archive" title="Archive (E)">Archive</button>
+      <button type="button" data-act="delete" title="Delete (Delete)">Delete</button>
+      <button type="button" data-act="move" title="Move to… (M)">Move to…</button>
+      <button type="button" data-act="read" title="Mark as read or unread (U)">Mark as unread</button>
+      <button type="button" data-act="flag" title="Flag (S)">Flag</button>
+    </div>
+    <div id="many" class="empty" hidden>
+      <p id="many-count" class="big"></p>
+      <p class="note">Right-click for more, or press <kbd>Delete</kbd>, <kbd>E</kbd> to archive, <kbd>M</kbd> to move.</p>
+    </div>
     <article id="message" hidden>
       <header class="message-head">
-        <button type="button" id="back" class="link back">‹ Back</button>
         <h2 id="message-subject"></h2>
         <p><strong id="message-from"></strong> <span id="message-address" class="note"></span></p>
         <p class="note"><span id="message-date"></span></p>
@@ -129,6 +140,20 @@
               referrerpolicy="no-referrer"></iframe>
     </article>
   </section>
+</div>
+
+<div id="menu" class="menu" role="menu" hidden></div>
+
+<dialog id="picker" aria-labelledby="picker-title">
+  <h2 id="picker-title">Move to…</h2>
+  <input id="picker-filter" type="text" placeholder="Type a folder name" aria-label="Folder name" autocomplete="off" spellcheck="false">
+  <ul id="picker-list" class="picker-list" role="listbox" aria-label="Folders"></ul>
+  <p class="note">↑ ↓ to choose, Enter to pick, Esc to cancel</p>
+</dialog>
+
+<div id="toast" class="toast" role="status" hidden>
+  <span id="toast-text"></span>
+  <button type="button" id="toast-undo" class="link">Undo</button>
 </div>
 
 <dialog id="settings">

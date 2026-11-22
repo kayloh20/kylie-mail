@@ -6,12 +6,12 @@ and smart filing.
 
 ## Status
 
-Signing in and reading work: passkeys and recovery codes, folders with unread counts, the message
-list, and messages with their attachments. Coming next, in this order:
+Signing in, reading and acting on mail work: passkeys and recovery codes, folders with unread
+counts, the message list, messages with their attachments, and deleting, archiving, moving and
+flagging with undo. Coming next, in this order:
 
-1. **Acting on mail.** Delete, move, multi-select, right-click and the app's keyboard shortcuts.
-2. **Smart filing**, using the app's own filing code.
-3. **Writing.** Replies, forwards and new mail, in plain text only, like the app.
+1. **Smart filing**, using the app's own filing code.
+2. **Writing.** Replies, forwards and new mail, in plain text only, like the app.
 
 ## Signing in
 
@@ -27,8 +27,7 @@ list, and messages with their attachments. Coming next, in this order:
 ## Reading
 
 - **Folders, messages and the message itself**, side by side on a big screen and one at a time on
-  a phone. <kbd>↑</kbd>/<kbd>↓</kbd> or <kbd>J</kbd>/<kbd>K</kbd> move through messages, <kbd>Esc</kbd>
-  closes one, <kbd>R</kbd> refreshes. Opening a message marks it read, like the app.
+  a phone. <kbd>R</kbd> refreshes. Opening a message marks it read, like the app.
 - **HTML email gets three locks.** The server strips anything active (scripts, forms, frames,
   plugins, event handlers, refreshes, outside style sheets). The message is then shown in a
   sandboxed frame where scripts can't run at all, under its own content security policy that
@@ -41,6 +40,28 @@ list, and messages with their attachments. Coming next, in this order:
   inside Kylie Mail.
 - **Mail comes live from iCloud** over the session's own connection, which closes when the
   session ends. Nothing about your mail is written to the server's disk.
+
+## Acting on mail
+
+Like the app on a big screen:
+
+| Do this | Mouse | Keyboard |
+|---|---|---|
+| Select one | Click | <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>J</kbd> <kbd>K</kbd> |
+| Select several | <kbd>⌘</kbd>/<kbd>Ctrl</kbd>-click, <kbd>Shift</kbd>-click | <kbd>Shift</kbd>+<kbd>↑</kbd> <kbd>↓</kbd>, <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>A</kbd> |
+| Delete | Right-click, toolbar | <kbd>Delete</kbd> or <kbd>Backspace</kbd> |
+| Archive | Right-click, toolbar | <kbd>E</kbd> |
+| Move to a folder | Right-click, toolbar | <kbd>M</kbd> or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> |
+| Mark read or unread | Right-click, toolbar | <kbd>U</kbd> |
+| Flag | Right-click, toolbar | <kbd>S</kbd> |
+| Undo a delete, archive or move | *Undo* on the notice | <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Z</kbd> |
+| Go to a folder | Folder list | <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>K</kbd> |
+| Clear the selection | | <kbd>Esc</kbd> |
+
+Deleting moves to Trash; deleting from Trash deletes for good. As in the app, deletes, archives and
+moves wait 6 seconds before reaching iCloud, so Undo is instant. The wait happens on the server, so
+closing the tab doesn't cancel them, and signing out sends any that are still waiting. Marking
+read or flagged happens right away.
 
 ## How your mail is protected
 

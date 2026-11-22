@@ -49,6 +49,9 @@ class TestMail(imapPort: Int = 0, smtpPort: Int = 0) : AutoCloseable {
 
     /** A mailbox with one of each kind of message, oldest first. */
     fun seed() {
+        // iCloud's own names for these.
+        createFolder("Archive")
+        createFolder("Deleted Messages")
         createFolder("Receipts")
         val day = 24 * 60 * 60 * 1000L
         val start = System.currentTimeMillis() - 10 * day

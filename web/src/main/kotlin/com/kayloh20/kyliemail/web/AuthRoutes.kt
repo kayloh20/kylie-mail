@@ -45,12 +45,13 @@ class Services(
     val mailLogin: MailLogin,
     val now: () -> Long = System::currentTimeMillis,
     val mailServer: ServerConfig = ServerConfig.ICLOUD,
+    val undoMs: Long = MailClient.UNDO_MS,
 ) {
     /** The session's connection to iCloud, made on first use. */
     fun mail(session: Session): MailClient = synchronized(session) {
         session.mail ?: run {
             val account = vault.account() ?: throw ApiError(HttpStatusCode.Conflict, "Kylie Mail isn't set up yet.")
-            MailClient(account.username, { vault.password(session.accountKey) }, mailServer).also { session.mail = it }
+            MailClient(account.username, { vault.password(session.accountKey) }, mailServer, undoMs).also { session.mail = it }
         }
     }
 
