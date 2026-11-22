@@ -15,8 +15,9 @@ android {
         applicationId = "com.kayloh20.kyliemail"
         minSdk = 26
         targetSdk = 36
-        // CI builds count up so each new APK installs over the previous one.
-        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+        // CI's APK builds count up so each one installs over the previous one (see android.yml).
+        // Everything else, tests included, stays at 1, so an unchanged app reuses its test results.
+        versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
         versionName = "0.1.0"
 
         // Firebase settings for push from the relay, read from google-services.json the way Google's

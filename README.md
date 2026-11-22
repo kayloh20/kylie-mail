@@ -33,9 +33,16 @@ iCloud requires an app-specific password for mail apps other than Apple Mail:
 
 ## Installing a build
 
-Every push to `main` builds a signed release APK on GitHub Actions. Open the latest run under
-**Actions**, download the `kylie-mail-*` artifact, unzip it and install the APK. Each build installs
-over the previous one.
+Every push to `main` that changes the app builds a signed release APK on GitHub Actions. Open the
+latest run of the **Android** workflow under **Actions**, download the `kylie-mail-*` artifact,
+unzip it and install the APK. Each build installs over the previous one.
+
+The APK is built alongside the tests, so it's ready before they finish. If the run goes red, don't
+install that one.
+
+CI is split by part of the repository, and each workflow runs only when its part changes:
+**Android** (`app/`), **Relay** (`relay/`) and **Web** (`web/`, plus the app's mail code, which the
+web server compiles too).
 
 Release builds are signed with a private key that lives only in the repository's GitHub secrets:
 
