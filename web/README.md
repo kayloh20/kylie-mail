@@ -26,11 +26,19 @@ relay).
 
 - **Folders, messages and the message itself**, side by side on a big screen and one at a time on
   a phone. Opening a message marks it read, like the app.
-- **New mail shows up by itself**: the page checks once a minute while its tab is visible, and as
-  soon as you come back to it, without moving your selection, the message you're reading or where
-  the list is scrolled to. The tab's title shows how many are unread in the inbox. The ↻ button
-  checks right away. These checks don't count as using the page, so an open tab you've walked away
-  from still signs out after 2 idle hours.
+- **New mail shows up the moment it arrives**, as in the app: while a page is open, the server keeps
+  one extra iCloud connection in IMAP IDLE on your inbox, and a live stream (Server-Sent Events)
+  tells the page whenever the inbox changes. The stream only ever says "the inbox changed", never
+  anything about the mail; the page then fetches the list as usual. It updates even in a background
+  tab, so the tab's title always shows how many are unread. The watcher reconnects by itself,
+  renews IDLE every 20 minutes, and closes 5 minutes after the last page stops listening or when
+  you sign out.
+- **A regular check is the safety net**: once a minute while the tab is visible (every 5 minutes
+  while the live stream is up), and as soon as you come back to the tab. It catches changes in
+  other folders too. The ↻ button checks right away. New mail never moves your selection, the
+  message you're reading or where the list is scrolled to.
+- **None of this keeps you signed in**: the stream and the checks don't count as using the page,
+  so a tab you've walked away from still signs out after 2 idle hours.
 - **HTML email gets three locks.** The server strips anything active (scripts, forms, frames,
   plugins, event handlers, refreshes, outside style sheets). The message is then shown in a
   sandboxed frame where scripts can't run at all, under its own content security policy that

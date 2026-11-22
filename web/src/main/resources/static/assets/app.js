@@ -9,6 +9,7 @@ const $ = (id) => document.getElementById(id);
 
 /** Shows one sign-in screen, or the mailbox when [view] is "app". */
 function show(view) {
+  if (view !== "app" && typeof stopChecking === "function") stopChecking();
   $("auth").hidden = view === "app";
   $("app").hidden = view !== "app";
   for (const v of views) $(v).hidden = v !== view;
@@ -1538,13 +1539,22 @@ let checkTimer = null;
  * Looks for new mail once a minute while the tab is visible, and as soon as you come back to it.
  * These checks don't count as using the page, so an open tab still signs out after 2 idle hours.
  */
-async function checkForMail() {
-  if (checking || $("app").hidden || document.visibilityState !== "visible" || mail.busy) return;
+async function checkForMail({ force = false } = {}) {
+  if ($("app").hidden) return;
+  if (checking || mail.busy) {
+    // Something's in the way; when the server said there's news, try again shortly.
+    if (force) setTimeout(() => checkForMail({ force }), 1000);
+    return;
+  }
+  if (!force && document.visibilityState !== "visible") return;
+  // While the live stream is connected, the regular check is only a safety net.
+  if (!force && liveSince && Date.now() - lastCheck < LIVE_CHECK_EVERY_MS) return;
   checking = true;
   lastCheck = Date.now();
   try {
     mail.folders = await api("GET", "/api/folders", undefined, { background: true });
     renderFolders();
+    if (!events) listenForMail();
     if (!mail.search && mail.folder) await softRefresh({ background: true });
   } catch {
     // The next check will try again.
@@ -1557,6 +1567,40 @@ function startChecking() {
   clearInterval(checkTimer);
   lastCheck = Date.now();
   checkTimer = setInterval(checkForMail, CHECK_EVERY_MS);
+  listenForMail();
+}
+
+function stopChecking() {
+  clearInterval(checkTimer);
+  if (events) events.close();
+  events = null;
+  liveSince = 0;
+}
+
+// The live stream: the server watches the inbox with IMAP IDLE and says the moment it changes.
+
+const LIVE_CHECK_EVERY_MS = 5 * 60_000;
+let events = null;
+let liveSince = 0;
+let changedTimer = null;
+
+function listenForMail() {
+  if (events || !window.EventSource) return;
+  events = new EventSource("/api/events");
+  events.addEventListener("open", () => {
+    liveSince = Date.now();
+  });
+  events.addEventListener("changed", () => {
+    // Several changes at once (a batch arriving) need only one look.
+    clearTimeout(changedTimer);
+    changedTimer = setTimeout(() => checkForMail({ force: true }), 400);
+  });
+  events.addEventListener("error", () => {
+    liveSince = 0;
+    // The browser reconnects by itself, unless the server turned it away (signed out); then the
+    // regular checks carry on, and the next one finds out.
+    if (events && events.readyState === EventSource.CLOSED) events = null;
+  });
 }
 
 async function refresh() {
@@ -1636,7 +1680,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   $("signout").addEventListener("click", async () => {
-    clearInterval(checkTimer);
+    stopChecking();
     document.title = "Kylie Mail";
     await api("POST", "/api/signout").catch(() => {});
     closeMessage();

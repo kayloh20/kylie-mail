@@ -79,6 +79,7 @@ fun Application.webModule(config: WebConfig, services: Services = Services.creat
         authRoutes(services)
         mailRoutes(services)
         composeRoutes(services)
+        eventRoutes(services)
         staticResources("/assets", "static/assets")
         staticResources("/", "static", index = "index.html")
     }

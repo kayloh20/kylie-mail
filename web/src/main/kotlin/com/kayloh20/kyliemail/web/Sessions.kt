@@ -12,6 +12,9 @@ class Session(val accountKey: ByteArray, val createdAt: Long, var lastSeenAt: Lo
 
     /** Mail being sent, and files attached while writing. */
     @Volatile var outbox: Outbox? = null
+
+    /** Watches the inbox for new mail while a page is listening. */
+    @Volatile var watcher: InboxWatcher? = null
 }
 
 /**
@@ -58,6 +61,8 @@ class Sessions(private val now: () -> Long = System::currentTimeMillis) {
     /** Removes a session by its hashed key and wipes its copy of the account key. */
     private fun drop(k: String) {
         val session = sessions.remove(k) ?: return
+        session.watcher?.stop()
+        session.watcher = null
         // Filing stops first: it must never save with the key wiped below.
         session.filing?.let { runCatching { it.close() } }
         session.filing = null

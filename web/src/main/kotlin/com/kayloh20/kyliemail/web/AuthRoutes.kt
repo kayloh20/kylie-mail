@@ -3,6 +3,7 @@ package com.kayloh20.kyliemail.web
 import com.kayloh20.kyliemail.web.Crypto.b64url
 import com.kayloh20.kyliemail.web.Crypto.fromB64url
 import com.kayloh20.kyliemail.data.compose.SmtpSender
+import com.kayloh20.kyliemail.data.mail.ImapConnector
 import com.kayloh20.kyliemail.data.mail.ServerConfig
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -49,7 +50,20 @@ class Services(
     val undoMs: Long = MailClient.UNDO_MS,
     val undoSendMs: Long = Outbox.UNDO_SEND_MS,
     val sentCopyDelayMs: Long = Outbox.SENT_COPY_DELAY_MS,
+    val eventHeartbeatMs: Long = EVENT_HEARTBEAT_MS,
 ) {
+    /** The session's inbox watcher, started when a page first listens (or again after it stopped). */
+    fun watcher(session: Session): InboxWatcher = synchronized(session) {
+        session.watcher?.takeIf { it.running } ?: run {
+            val account = vault.account() ?: throw ApiError(HttpStatusCode.Conflict, "Kylie Mail isn't set up yet.")
+            InboxWatcher(ImapConnector(mailServer), account.username, { vault.password(session.accountKey) }, now = now)
+                .also {
+                    session.watcher = it
+                    it.start()
+                }
+        }
+    }
+
     /** The session's outgoing mail, made on first use. */
     fun outbox(session: Session): Outbox {
         val mail = mail(session)

@@ -1,6 +1,9 @@
 package com.kayloh20.kyliemail.web
 
 import io.ktor.client.request.get
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.utils.io.readUTF8Line
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -24,6 +27,7 @@ import org.junit.rules.TemporaryFolder
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class MailFlowTest {
@@ -52,6 +56,7 @@ class MailFlowTest {
             undoMs = undoMs,
             undoSendMs = undoSendMs,
             sentCopyDelayMs = 100,
+            eventHeartbeatMs = 300,
         )
         this@MailFlowTest.services = services
         val prf = Crypto.randomBytes(32)
@@ -623,5 +628,77 @@ class MailFlowTest {
         assertEquals("Practice moved to 4pm", after.messages.first().subject)
         assertEquals(before.total + 1, after.total)
         assertEquals(5, folders()[0].unread)
+    }
+
+    // Instant new mail: IMAP IDLE on the server, a live stream to the page
+
+    /** Opens the page's live stream and hands [block] a way to read its lines. */
+    private suspend fun Browser.listen(block: suspend (nextLine: suspend (Long) -> String?) -> Unit) {
+        app.client.prepareGet("/api/events") {
+            token?.let { header(HttpHeaders.Cookie, "$SESSION_COOKIE=$it") }
+        }.execute { response ->
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals("text/event-stream", response.headers[HttpHeaders.ContentType]?.substringBefore(';'))
+            val channel = response.bodyAsChannel()
+            block { timeoutMs -> kotlinx.coroutines.withTimeoutOrNull(timeoutMs) { channel.readUTF8Line() } }
+        }
+    }
+
+    private suspend fun waitFor(nextLine: suspend (Long) -> String?, wanted: (String) -> Boolean, timeoutMs: Long = 10_000): String? {
+        val until = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < until) {
+            val line = nextLine(until - System.currentTimeMillis()) ?: return null
+            if (wanted(line)) return line
+        }
+        return null
+    }
+
+    @Test
+    fun newMailIsAnnouncedTheMomentItArrives() = server {
+        listen { next ->
+            assertNotNull(waitFor(next, { it == ": connected" }), "the stream opens")
+            // Give the watcher a moment to settle into IDLE, then mail arrives.
+            kotlinx.coroutines.delay(1_500)
+            val sentAt = System.currentTimeMillis()
+            mail.deliver(mail.message("Madison <madison@example.org>", "Right now!") { setText("Instant?") })
+            assertNotNull(waitFor(next, { it == "event: changed" }), "the page hears about it")
+            assertEquals("data: {\"folder\":\"INBOX\"}", next(2_000))
+            assertTrue(System.currentTimeMillis() - sentAt < 5_000, "within seconds, not minutes")
+        }
+        // The page then lists the inbox as usual.
+        assertEquals("Right now!", inbox().messages.first().subject)
+    }
+
+    @Test
+    fun theStreamSaysNothingAboutTheMailItself() = server {
+        listen { next ->
+            waitFor(next, { it == ": connected" })
+            kotlinx.coroutines.delay(1_500)
+            mail.deliver(mail.message("Madison <madison@example.org>", "Secret plans") { setText("Top secret") })
+            val lines = mutableListOf<String>()
+            waitFor(next, { lines += it; it.startsWith("data:") })
+            assertTrue(lines.none { "Secret" in it || "madison" in it }, lines.toString())
+        }
+    }
+
+    @Test
+    fun signingOutEndsTheStream() = server {
+        listen { next ->
+            waitFor(next, { it == ": connected" })
+            post("/api/signout", "{}")
+            // Heartbeats stop and the stream closes.
+            assertEquals(null, waitFor(next, { false }, timeoutMs = 3_000))
+        }
+    }
+
+    @Test
+    fun theStreamNeedsASessionAndDoesNotExtendIt() = server {
+        val session = services.sessions.get(token, touch = false)!!
+        val before = session.lastSeenAt
+        kotlinx.coroutines.delay(50)
+        listen { next -> waitFor(next, { it == ": connected" }) }
+        assertEquals(before, session.lastSeenAt, "listening isn't using the page")
+        token = null
+        assertEquals(HttpStatusCode.Unauthorized, get("/api/events").status)
     }
 }
