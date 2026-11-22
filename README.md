@@ -20,8 +20,8 @@ suggested filing.
 
 ## On the web
 
-The web version lives in [`web/`](web/README.md) and runs on its own server. It is at an early
-stage: the server and its security groundwork are in place, and passkey sign-in comes next.
+The web version lives in [`web/`](web/README.md) and runs on its own server. Passkey sign-in works;
+reading mail comes next.
 
 ## Signing in
 

@@ -27,7 +27,11 @@ fun main() {
         exitProcess(1)
     }
     val port = setting("PORT", "8080").toInt()
+    val services = Services.create(config)
 
     println("Kylie Mail web listening on $port for ${config.origin}")
-    embeddedServer(CIO, port = port, host = "0.0.0.0") { webModule(config) }.start(wait = true)
+    if (services.vault.account() == null) {
+        println("Not set up yet. Open ${config.origin} and enter this setup code: ${services.setupCode.current()}")
+    }
+    embeddedServer(CIO, port = port, host = "0.0.0.0") { webModule(config, services) }.start(wait = true)
 }

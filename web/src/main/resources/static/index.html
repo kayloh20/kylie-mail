@@ -10,11 +10,99 @@
 <script src="/assets/app.js" defer></script>
 </head>
 <body>
-<main class="welcome">
-  <img src="/assets/icon.svg" alt="" width="72" height="72">
-  <h1>Kylie Mail</h1>
-  <p>Your iCloud mail, on the web.</p>
-  <p class="note" id="status">Signing in with a passkey is coming next.</p>
+<main>
+  <header class="brand">
+    <img src="/assets/icon.svg" alt="" width="56" height="56">
+    <h1>Kylie Mail</h1>
+  </header>
+
+  <section id="loading" class="card">
+    <p class="note">Loading…</p>
+  </section>
+
+  <section id="unsupported" class="card" hidden>
+    <h2>This browser can't use passkeys</h2>
+    <p>Kylie Mail signs you in with a passkey. Open it in a current version of Safari, Chrome, Edge or Firefox.</p>
+  </section>
+
+  <section id="setup" class="card" hidden>
+    <h2>Set up Kylie Mail</h2>
+    <p>Connect your iCloud mail, then create a passkey. The passkey is the only way in, and it also locks your password on this server.</p>
+    <form id="setup-form" autocomplete="off">
+      <label>Setup code
+        <input name="setupCode" required autocomplete="off" spellcheck="false">
+        <small>In the server's log: <code>docker compose logs web</code></small>
+      </label>
+      <label>iCloud address
+        <input name="email" type="email" required autocomplete="username" spellcheck="false">
+      </label>
+      <label>App-specific password
+        <input name="password" type="password" required autocomplete="off">
+        <small>Make one at account.apple.com, under Sign-In and Security.</small>
+      </label>
+      <label>Name for this passkey
+        <input name="passkeyName" maxlength="60" placeholder="My Mac">
+      </label>
+      <button type="submit">Continue and create a passkey</button>
+      <p class="error" role="alert"></p>
+    </form>
+  </section>
+
+  <section id="codes" class="card" hidden>
+    <h2>Save your recovery codes</h2>
+    <p>If you lose your passkeys, each code below lets you sign in once. Print them or keep them in a password manager. You won't see them again.</p>
+    <ol id="code-list" class="codes"></ol>
+    <div class="row">
+      <button type="button" id="copy-codes" class="secondary">Copy</button>
+      <button type="button" id="print-codes" class="secondary">Print</button>
+    </div>
+    <label class="check"><input type="checkbox" id="codes-saved"> I've saved these codes somewhere safe</label>
+    <button type="button" id="codes-done" disabled>Continue</button>
+  </section>
+
+  <section id="signin" class="card" hidden>
+    <h2>Sign in</h2>
+    <button type="button" id="signin-button">Sign in with a passkey</button>
+    <p class="error" role="alert"></p>
+    <details>
+      <summary>Lost your passkeys? Use a recovery code</summary>
+      <form id="recover-form" autocomplete="off">
+        <label>Recovery code
+          <input name="code" required spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX-XXXXX">
+        </label>
+        <button type="submit" class="secondary">Sign in with this code</button>
+        <p class="error" role="alert"></p>
+      </form>
+    </details>
+  </section>
+
+  <section id="home" hidden>
+    <div class="card">
+      <div class="row spread">
+        <p>Signed in as <strong id="me-email"></strong></p>
+        <button type="button" id="signout" class="secondary">Sign out</button>
+      </div>
+      <p id="recovered" class="warning" hidden>You signed in with a recovery code. Add a passkey below so you don't run out.</p>
+      <p class="note">Your mailbox is coming next.</p>
+    </div>
+
+    <div class="card">
+      <h2>Passkeys</h2>
+      <ul id="passkey-list" class="list"></ul>
+      <form id="add-passkey-form" class="row" autocomplete="off">
+        <input name="name" maxlength="60" placeholder="Name, such as My iPhone" aria-label="Name for the new passkey">
+        <button type="submit" class="secondary">Add a passkey</button>
+      </form>
+      <p class="error" role="alert"></p>
+    </div>
+
+    <div class="card">
+      <h2>Recovery codes</h2>
+      <p><span id="codes-left"></span> unused.</p>
+      <button type="button" id="new-codes" class="secondary">Make new codes</button>
+      <p class="error" role="alert"></p>
+    </div>
+  </section>
 </main>
 </body>
 </html>

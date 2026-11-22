@@ -42,6 +42,7 @@ dependencies {
     implementation("io.ktor:ktor-server-content-negotiation:$ktor")
     implementation("io.ktor:ktor-serialization-kotlinx-json:$ktor")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+    implementation("com.webauthn4j:webauthn4j-core:0.32.0.RELEASE")
     // The same mail library as the app (javax.mail, version 1.6), in its plain-Java build.
     implementation("com.sun.mail:jakarta.mail:1.6.8")
     runtimeOnly("org.slf4j:slf4j-simple:2.0.17")
@@ -58,4 +59,13 @@ application {
 
 tasks.test {
     useJUnit()
+}
+
+// Runs the server locally with a pretend iCloud login; see LocalServer.kt.
+tasks.register<JavaExec>("runLocal") {
+    group = "application"
+    description = "Runs Kylie Mail on http://localhost:8080 with a pretend iCloud login"
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.kayloh20.kyliemail.web.LocalServerKt")
+    workingDir = projectDir
 }

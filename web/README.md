@@ -6,16 +6,25 @@ and smart filing.
 
 ## Status
 
-Foundation only: the server, its security headers, and the setup for its own server. It doesn't
-show any mail yet. Coming next, in this order:
+Signing in works: first-time setup, passkeys, recovery codes, and managing both. It doesn't show
+any mail yet. Coming next, in this order:
 
-1. **Sign in with a passkey.** No password to steal or phish. Printed recovery codes are the backup
-   if you lose your devices.
-2. **Reading.** Folders, the message list, and HTML email cleaned up on the server and shown in a
+1. **Reading.** Folders, the message list, and HTML email cleaned up on the server and shown in a
    sandbox with no scripts. Remote images stay blocked until you choose to load them.
-3. **Acting on mail.** Delete, move, multi-select, right-click and the app's keyboard shortcuts.
-4. **Smart filing**, using the app's own filing code.
-5. **Writing.** Replies, forwards and new mail, in plain text only, like the app.
+2. **Acting on mail.** Delete, move, multi-select, right-click and the app's keyboard shortcuts.
+3. **Smart filing**, using the app's own filing code.
+4. **Writing.** Replies, forwards and new mail, in plain text only, like the app.
+
+## Signing in
+
+- **Passkeys only.** There's no password to steal or phish. A passkey saved in iCloud Keychain or
+  Google Password Manager syncs to your other devices. Security keys work too if they support the
+  PRF extension (also called hmac-secret); a passkey without it is turned away, because it couldn't
+  lock your mail.
+- **Recovery codes.** Setup gives you 10, each good for one sign-in. Print them or keep them in a
+  password manager. You can make a fresh set at any time, which cancels the old ones.
+- **Sessions** end after 2 hours without use, 12 hours at most, or when the server restarts.
+- Wrong setup codes, sign-ins and recovery codes are rate limited.
 
 ## How your mail is protected
 
@@ -60,6 +69,12 @@ name pointed at it. Every command runs on your own machine or on the server, by 
    `read:packages` as the password.
 5. **Start**: `cd /opt/kylie-mail-web && docker compose up -d`. Check `https://<your domain>/healthz`
    says `ok`.
+6. **Set up your account.** Get the one-time setup code with
+   `docker compose logs web | grep "setup code"`, open your mail address in a browser, and follow the
+   steps. Once you're set up, the code stops working.
+
+To start over (this forgets your passkeys and the sealed password; your mail stays in iCloud):
+`cd /opt/kylie-mail-web && docker compose down && docker volume rm kylie-mail-web_web-data && docker compose up -d`.
 
 To update: `cd /opt/kylie-mail-web && docker compose pull && docker compose up -d`.
 
@@ -67,7 +82,11 @@ To update: `cd /opt/kylie-mail-web && docker compose pull && docker compose up -
 
     ./gradlew -p web test
 
-To run it locally at http://localhost:8080:
+To try the pages at http://localhost:8080 with a pretend iCloud (any address, password `test`):
 
-    ./gradlew -p web installDist
-    PUBLIC_ORIGIN=http://localhost:8080 DATA_DIR=build/data web/build/install/web/bin/web
+    ./gradlew -p web runLocal
+
+It prints the setup code. Its data goes to `web/build/local-data`; delete that folder to start over.
+
+The tests drive sign-up, sign-in and recovery end to end with a software passkey
+(`SoftwarePasskey.kt`), including phishing attempts from another site and replayed sign-ins.
