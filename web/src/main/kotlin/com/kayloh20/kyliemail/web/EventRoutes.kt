@@ -30,7 +30,15 @@ fun Route.eventRoutes(services: Services) {
             try {
                 coroutineScope {
                     val changed = Channel<String>(Channel.CONFLATED)
-                    val collector = launch { watcher.changes.collect { changed.send(it) } }
+                    val collector = launch {
+                        watcher.changes.collect { folder ->
+                            // Counts first, so the page's next look at the folder list is already right.
+                            runCatching { services.mail(session).refreshFolderCounts(listOf(folder)) }
+                            changed.send(folder)
+                        }
+                    }
+                    // A background refresh of the folder list found something new.
+                    val folders = launch { services.mail(session).folderChanges.collect { changed.send(FOLDERS) } }
                     writeStringUtf8("retry: 10000\n: connected\n\n")
                     flush()
                     while (true) {
@@ -39,12 +47,15 @@ fun Route.eventRoutes(services: Services) {
                         if (services.sessions.get(token, touch = false) == null || !watcher.running) break
                         if (folder == null) {
                             writeStringUtf8(": still here\n\n")
+                        } else if (folder == FOLDERS) {
+                            writeStringUtf8("event: folders\ndata: {}\n\n")
                         } else {
                             writeStringUtf8("event: changed\ndata: ${Json.encodeToString(ChangedEvent.serializer(), ChangedEvent(folder))}\n\n")
                         }
                         flush()
                     }
                     collector.cancel()
+                    folders.cancel()
                 }
             } finally {
                 stopListening()
@@ -55,6 +66,9 @@ fun Route.eventRoutes(services: Services) {
 
 @kotlinx.serialization.Serializable
 data class ChangedEvent(val folder: String)
+
+/** Not a folder name: IMAP names can't start with a NUL. */
+private const val FOLDERS = "\u0000folders"
 
 private val Json = kotlinx.serialization.json.Json
 

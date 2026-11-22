@@ -226,36 +226,125 @@ async function loadSettings() {
 
 // Settings: smart filing
 
-let trainingPoll = null;
-
+/** Smart filing's line in Settings: what it has learned so far. */
 async function loadFiling() {
   const filing = await api("GET", "/api/filing");
   const trainedFolders = filing.folders.filter((f) => f.trained);
-  $("filing-summary").textContent = filing.examples
-    ? `Learned from ${plural(filing.examples, "email")}${trainedFolders.length ? ` in ${plural(trainedFolders.length, "folder")}` : ""}, plus every move you make.`
-    : "Not trained yet. Check the folders you file mail into, then start.";
-  const running = filing.status.state === "running";
-  if (!running || !$("filing-folders").children.length) {
-    $("filing-folders").replaceChildren(
-      ...filing.folders.map((f) => {
-        const box = el("input", { type: "checkbox", value: f.id, checked: f.trained });
-        return el("li", {}, el("label", {}, box, el("span", { textContent: f.name }), el("small", { textContent: f.examples ? plural(f.examples, "email") : "" })));
-      }),
-    );
-  }
-  for (const box of $("filing-folders").querySelectorAll("input")) box.disabled = running;
-  $("train").disabled = running;
-  $("stop-training").hidden = !running;
   const s = filing.status;
-  $("training-status").textContent =
-    s.state === "running" ? (s.folder ? `Learning from ${s.folder} (${s.index} of ${s.total}), ${plural(s.learned, "email")} so far…` : "Starting…")
-    : s.state === "finished" ? `Done: learned from ${plural(s.learned, "new email")}.`
-    : s.state === "failed" ? s.message || "Training stopped."
-    : "";
-  clearTimeout(trainingPoll);
-  if (running && $("settings").open) trainingPoll = setTimeout(() => loadFiling().catch(() => {}), 1000);
-  if (s.state === "finished") mail.suggest.key = ""; // new lessons: ask again
+  $("filing-summary").textContent =
+    s.state === "running" ? `Learning from ${s.folder || "your folders"}…`
+    : filing.examples ? `Learned from ${plural(filing.examples, "email")}${trainedFolders.length ? ` in ${plural(trainedFolders.length, "folder")}` : ""}, plus every move you make.`
+    : "Not trained yet.";
   return filing;
+}
+
+// Training smart filing, in its own window as in the app
+
+const training = { folders: [], trained: new Set(), selected: new Set(), startedHere: false, poll: null };
+
+async function openTraining() {
+  if ($("settings").open) $("settings").close();
+  training.startedHere = false;
+  showTrainingView("choose");
+  $("training-folders").replaceChildren(el("li", { className: "loading-text" }, el("span", { className: "spinner" }), document.createTextNode(" Loading folders…")));
+  $("training-start").disabled = true;
+  $("training").showModal();
+  try {
+    const filing = await api("GET", "/api/filing");
+    if (filing.status.state === "running") return followTraining(filing.status);
+    training.folders = filing.folders;
+    training.trained = new Set(filing.folders.filter((f) => f.trained).map((f) => f.id));
+    // Start from what was trained before, or everything the first time, as in the app.
+    training.selected = new Set(training.trained.size ? training.trained : filing.folders.map((f) => f.id));
+    renderTrainingChoice();
+  } catch (e) {
+    $("training-folders").replaceChildren(el("li", { className: "error", textContent: e.message }));
+  }
+}
+
+function showTrainingView(view) {
+  for (const name of ["choose", "running", "result"]) $(`training-${name}`).hidden = name !== view;
+}
+
+function renderTrainingChoice() {
+  const none = training.folders.length === 0;
+  $("training-none").hidden = !none;
+  $("training-pick").hidden = none;
+  $("training-folders").replaceChildren(
+    ...training.folders.map((f) => {
+      const box = el("input", { type: "checkbox", value: f.id, checked: training.selected.has(f.id) });
+      box.onchange = () => {
+        if (box.checked) training.selected.add(f.id);
+        else training.selected.delete(f.id);
+        updateTrainingChoice();
+      };
+      return el("li", {}, el("label", {}, box, el("span", { textContent: f.name }),
+        training.trained.has(f.id) ? el("span", { className: "trained", textContent: "Trained" }) : null,
+        el("small", { textContent: f.total ? f.total.toLocaleString() : "" })));
+    }),
+  );
+  updateTrainingChoice();
+}
+
+function updateTrainingChoice() {
+  const all = $("training-all");
+  const count = training.selected.size;
+  all.checked = count > 0 && count === training.folders.length;
+  all.indeterminate = count > 0 && count < training.folders.length;
+  $("training-count").textContent = `${count} of ${training.folders.length}`;
+  const forgetting = [...training.trained].some((id) => !training.selected.has(id));
+  $("training-forget").hidden = !forgetting;
+  $("training-start").textContent = count ? "Start training" : "Forget all";
+  $("training-start").disabled = !count && !forgetting;
+}
+
+async function startTraining() {
+  const folders = training.folders.filter((f) => training.selected.has(f.id)).map((f) => f.id);
+  try {
+    await api("POST", "/api/filing/train", { folders });
+    training.startedHere = true;
+    followTraining({ state: "running", total: folders.length, index: 0, learned: 0 });
+  } catch (e) {
+    showTrainingResult(e.message);
+  }
+}
+
+/** Shows training's progress while the window is open; it carries on when closed. */
+function followTraining(status) {
+  clearTimeout(training.poll);
+  if (status.state === "running") {
+    showTrainingView("running");
+    $("training-folder").textContent = status.folder ? `Learning from ${status.folder}…` : "Starting…";
+    $("training-progress").max = Math.max(1, status.total);
+    $("training-progress").value = Math.max(0, status.index - 1);
+    $("training-detail").textContent = status.total
+      ? `Folder ${Math.max(1, status.index)} of ${status.total} · ${plural(status.learned, "email")} learned so far`
+      : "";
+    if ($("training").open) {
+      training.poll = setTimeout(async () => {
+        try {
+          followTraining((await api("GET", "/api/filing", undefined, { background: true })).status);
+        } catch {
+          // Try again next time it's opened.
+        }
+      }, 1000);
+    }
+    return;
+  }
+  mail.suggest.key = ""; // new lessons: ask again
+  if (status.state === "finished") showTrainingResult(`Done: learned from ${plural(status.learned, "new email")} in ${plural(status.total, "folder")}.`);
+  else if (status.state === "failed") showTrainingResult(status.message || "Training stopped.");
+  else showTrainingResult("Training stopped. What it had learned is kept.");
+}
+
+function showTrainingResult(text) {
+  showTrainingView("result");
+  $("training-result-text").textContent = text;
+}
+
+function closeTraining() {
+  clearTimeout(training.poll);
+  if ($("training").open) $("training").close();
 }
 
 async function loadIdentity() {
@@ -286,11 +375,17 @@ function setTheme(theme) {
   else document.documentElement.dataset.theme = theme;
 }
 
-async function openSettings(scrollTo) {
+/** Opens at once; each part fills in as it arrives instead of all of them holding the window. */
+function openSettings(scrollTo) {
   for (const radio of document.querySelectorAll('input[name="theme"]')) radio.checked = radio.value === currentTheme();
-  await Promise.all([loadSettings().catch(() => {}), loadFiling().catch(() => {}), loadIdentity().catch(() => {})]);
+  $("filing-summary").replaceChildren(el("span", { className: "spinner" }), document.createTextNode(" Loading…"));
   if (!$("settings").open) $("settings").showModal();
   if (scrollTo) $(scrollTo).scrollIntoView({ block: "start" });
+  loadSettings().catch(() => {});
+  loadIdentity().catch(() => {});
+  loadFiling().catch((e) => {
+    $("filing-summary").textContent = e.message;
+  });
 }
 
 // The mailbox
@@ -409,8 +504,9 @@ function foldersLoading() {
   $("folder-select").replaceChildren(el("option", { textContent: "Loading folders…" }));
 }
 
-async function loadFolders() {
-  mail.folders = await api("GET", "/api/folders");
+/** The remembered folder list, at once; [fresh] asks iCloud for every folder (the refresh button). */
+async function loadFolders({ fresh = false } = {}) {
+  mail.folders = await api("GET", `/api/folders${fresh ? "?fresh=1" : ""}`);
   renderFolders();
 }
 
@@ -849,7 +945,7 @@ function renderSuggestBar() {
   }
   if (!mail.suggest.trained) {
     const train = el("button", { type: "button", className: "link", textContent: "Train smart filing" });
-    train.onclick = () => openSettings("filing-card");
+    train.onclick = () => openTraining();
     bar.replaceChildren(el("span", { className: "spark", textContent: "✨" }), el("span", { textContent: "Smart filing can suggest folders once it learns how you file." }), train);
     bar.hidden = false;
     return;
@@ -1471,7 +1567,7 @@ function typing(event) {
 }
 
 function onKey(event) {
-  if ($("app").hidden || $("settings").open || $("picker").open || $("compose").open || !$("menu").hidden || typing(event) || event.altKey) return;
+  if ($("app").hidden || $("settings").open || $("training").open || $("picker").open || $("compose").open || !$("menu").hidden || typing(event) || event.altKey) return;
   const command = event.metaKey || event.ctrlKey;
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
   if (command) {
@@ -1598,10 +1694,11 @@ async function checkForMail({ force = false } = {}) {
   checking = true;
   lastCheck = Date.now();
   try {
+    // The open folder first: looking at it freshens its count on the server, before the list is read.
+    if (!mail.search && mail.folder) await softRefresh({ background: true });
     mail.folders = await api("GET", "/api/folders", undefined, { background: true });
     renderFolders();
     if (!events) listenForMail();
-    if (!mail.search && mail.folder) await softRefresh({ background: true });
   } catch {
     // The next check will try again.
   } finally {
@@ -1636,6 +1733,14 @@ function listenForMail() {
   events.addEventListener("open", () => {
     liveSince = Date.now();
   });
+  events.addEventListener("folders", async () => {
+    try {
+      mail.folders = await api("GET", "/api/folders", undefined, { background: true });
+      renderFolders();
+    } catch {
+      // The next check catches up.
+    }
+  });
   events.addEventListener("changed", () => {
     // Several changes at once (a batch arriving) need only one look.
     clearTimeout(changedTimer);
@@ -1663,7 +1768,7 @@ async function refresh() {
 }
 
 async function refreshNow() {
-  await loadFolders().catch(() => {});
+  await loadFolders({ fresh: true }).catch(() => {});
   if (mail.search) {
     const q = mail.search.q;
     mail.listId = "";
@@ -1748,21 +1853,22 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   $("open-settings").addEventListener("click", () => openSettings());
-  $("train").addEventListener("click", (event) => {
-    const folders = [...$("filing-folders").querySelectorAll("input:checked")].map((box) => box.value);
-    busy(event.target, async () => {
-      try {
-        await api("POST", "/api/filing/train", { folders });
-        await loadFiling();
-      } catch (e) {
-        $("training-status").textContent = e.message;
-      }
-    });
+  $("open-training").addEventListener("click", openTraining);
+  $("training-all").addEventListener("change", (event) => {
+    training.selected = new Set(event.target.checked ? training.folders.map((f) => f.id) : []);
+    renderTrainingChoice();
   });
-  $("stop-training").addEventListener("click", async () => {
+  $("training-start").addEventListener("click", startTraining);
+  $("training-cancel").addEventListener("click", closeTraining);
+  $("close-training").addEventListener("click", closeTraining);
+  $("training-background").addEventListener("click", closeTraining);
+  $("training-done").addEventListener("click", closeTraining);
+  $("training-stop").addEventListener("click", async () => {
     await api("POST", "/api/filing/stop").catch(() => {});
-    await loadFiling().catch(() => {});
+    clearTimeout(training.poll);
+    showTrainingResult("Training stopped. What it had learned is kept.");
   });
+  $("training").addEventListener("close", () => clearTimeout(training.poll));
   $("close-settings").addEventListener("click", () => $("settings").close());
 
   $("add-passkey-form").addEventListener("submit", (event) => {

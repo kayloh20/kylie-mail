@@ -61,6 +61,29 @@ data class TrainingStatus(
     val message: String? = null,
 )
 
+/** Some JSON kept in one file, sealed with the account key; unreadable without signing in. */
+class SealedFile<T>(private val file: Path, private val serializer: kotlinx.serialization.KSerializer<T>, private val ad: String) {
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    @Synchronized
+    fun load(accountKey: ByteArray): T? {
+        if (!Files.exists(file)) return null
+        val opened = Crypto.open(accountKey, Files.readAllBytes(file), ad) ?: return null
+        return runCatching { json.decodeFromString(serializer, opened.toString(Charsets.UTF_8)) }.getOrNull()
+    }
+
+    @Synchronized
+    fun save(accountKey: ByteArray, value: T) {
+        // A session that has ended wipes its key; never seal anything with that.
+        if (accountKey.all { it == 0.toByte() }) return
+        Files.createDirectories(file.parent)
+        val temp = file.resolveSibling(file.fileName.toString() + ".tmp")
+        Files.write(temp, Crypto.seal(accountKey, json.encodeToString(serializer, value).toByteArray(Charsets.UTF_8), ad))
+        AccountStore.ownerOnly(temp)
+        Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    }
+}
+
 /**
  * Smart filing's memory, kept in one file sealed with the account key: senders, recipients and
  * subjects are about your mail, so they get the same protection as the password.

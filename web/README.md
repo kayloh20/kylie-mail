@@ -32,8 +32,11 @@ one in Settings → Appearance; that choice is kept in the browser.
 ## Reading
 
 - **Folders, messages and the message itself**, side by side on a big screen and one at a time on
-  a phone. Opening a message marks it read, like the app. The inbox opens straight away, without
-  waiting for the folder list, whose unread counts take one request per folder on iCloud.
+  a phone. Opening a message marks it read, like the app.
+- **The folder list is remembered**, since its unread counts take one request per folder on
+  iCloud: it shows at once, even right after signing in (it's kept sealed with your account key,
+  like everything else about your mail). Counts are freshened only for folders that just changed,
+  the whole list every 10 minutes in the background, and the ↻ button asks for all of it.
 - **New mail shows up the moment it arrives**, as in the app: while a page is open, the server keeps
   one extra iCloud connection in IMAP IDLE on your inbox, and a live stream (Server-Sent Events)
   tells the page whenever the inbox changes. The stream only ever says "the inbox changed", never
@@ -59,7 +62,7 @@ one in Settings → Appearance; that choice is kept in the browser.
   inside Kylie Mail.
 - **Mail comes live from iCloud** over the session's own connection, which closes when the
   session ends. The only things about your mail kept on the server's disk are sealed with your
-  account key: smart filing's memory and the senders you load images from.
+  account key: the folder list, smart filing's memory and the senders you load images from.
 
 ## Acting on mail
 
@@ -92,9 +95,11 @@ read or flagged happens right away.
 The app's own filing model, suggesting where mail goes from who sent it, which address it went to,
 the sender's company and words in the subject. No AI, and never the message itself.
 
-- **Train it** in Settings by checking the folders you file mail into. It reads the sender,
-  recipients and subject of up to 1,000 recent emails in each, and picks up mail filed there since
-  each time you sign in, including from your other devices.
+- **Train it** from Settings → Smart filing → *Train smart filing…*, a window of its own as in the
+  app: check the folders you file mail into (*All folders* checks them all), and it reads the
+  sender, recipients and subject of up to 1,000 recent emails in each, showing its progress; you
+  can close the window and it keeps going. What it learned stays between sign-ins, and each time
+  you sign in it picks up mail filed into those folders since, including from your other devices.
 - **It learns from you**: every Move and Archive is a lesson, and an undone one isn't. Deleting
   isn't filing.
 - **Suggestions** appear as one-click *File to* buttons above a message when it's confident (hover

@@ -85,6 +85,11 @@ class Services(
 
     private val filingStore by lazy { FilingStore(java.nio.file.Path.of(config.dataDir).resolve("filing.sealed")) }
 
+    /** The folder list, remembered between sign-ins so it shows at once; names are about your mail, so it's sealed. */
+    private val folderFile by lazy {
+        SealedFile(java.nio.file.Path.of(config.dataDir).resolve("folders.sealed"), kotlinx.serialization.builtins.ListSerializer(FolderInfo.serializer()), "folders")
+    }
+
     /** The session's smart filing, opened on first use; it also picks up mail filed since last time. */
     fun filing(session: Session): Filing = synchronized(session) {
         session.filing ?: run {
@@ -98,7 +103,11 @@ class Services(
     fun mail(session: Session): MailClient = synchronized(session) {
         session.mail ?: run {
             val account = vault.account() ?: throw ApiError(HttpStatusCode.Conflict, "Kylie Mail isn't set up yet.")
-            MailClient(account.username, { vault.password(session.accountKey) }, mailServer, undoMs).also { session.mail = it }
+            val folders = object : FolderStore {
+                override fun load() = folderFile.load(session.accountKey)
+                override fun save(folders: List<FolderInfo>) = folderFile.save(session.accountKey, folders)
+            }
+            MailClient(account.username, { vault.password(session.accountKey) }, mailServer, undoMs, folders).also { session.mail = it }
         }
     }
 

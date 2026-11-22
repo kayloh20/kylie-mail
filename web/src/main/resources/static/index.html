@@ -208,6 +208,43 @@
   <ul id="contact-suggest" class="contact-suggest" role="listbox" hidden></ul>
 </dialog>
 
+<dialog id="training" class="training" aria-labelledby="training-title">
+  <div class="dialog-head">
+    <h2 id="training-title"><span class="spark">✨</span> Train smart filing</h2>
+    <button type="button" id="close-training" class="icon" aria-label="Close">✕</button>
+  </div>
+
+  <div id="training-choose">
+    <p class="note">Choose the folders that show how you file. Kylie Mail reads the sender, recipients and subject of up to 1,000 recent emails in each, never the message text. What it learns is sealed with your passkey.</p>
+    <p id="training-none" class="note" hidden>You don't have any folders yet. Create folders in iCloud Mail, then train.</p>
+    <div id="training-pick">
+      <label class="check all-row"><input type="checkbox" id="training-all"> <strong>All folders</strong> <small id="training-count"></small></label>
+      <ul id="training-folders" class="list checks training-list"></ul>
+    </div>
+    <p id="training-forget" class="note small" hidden>Unchecked folders that were trained before will be forgotten.</p>
+    <div class="row end">
+      <button type="button" id="training-cancel" class="secondary">Cancel</button>
+      <button type="button" id="training-start">Start training</button>
+    </div>
+  </div>
+
+  <div id="training-running" hidden>
+    <p id="training-folder" class="big-ish"></p>
+    <progress id="training-progress" max="1" value="0"></progress>
+    <p id="training-detail" class="note"></p>
+    <p class="note small">You can close this; training keeps going in the background.</p>
+    <div class="row end">
+      <button type="button" id="training-stop" class="secondary">Stop</button>
+      <button type="button" id="training-background">Run in background</button>
+    </div>
+  </div>
+
+  <div id="training-result" hidden>
+    <p id="training-result-text"></p>
+    <div class="row end"><button type="button" id="training-done">Done</button></div>
+  </div>
+</dialog>
+
 <dialog id="settings">
   <div class="dialog-head">
     <h2>Settings</h2>
@@ -249,14 +286,9 @@
 
   <section class="card" id="filing-card">
     <h3>Smart filing</h3>
-    <p class="note">Suggests folders by learning how you file: who mail is from, who it went to, and its subject, never what it says. It learns from the folders you check here and from every move you make. What it learns is sealed with your passkey, like your password.</p>
-    <p id="filing-summary"></p>
-    <ul id="filing-folders" class="list checks"></ul>
-    <div class="row">
-      <button type="button" id="train" class="secondary">Learn from checked folders</button>
-      <button type="button" id="stop-training" class="link" hidden>Stop</button>
-    </div>
-    <p id="training-status" class="note" role="status"></p>
+    <p class="note">Suggests folders from who mail is from, who it went to and its subject, never what it says. What it learns is sealed with your passkey, like your password.</p>
+    <p id="filing-summary" class="loading-text"><span class="spinner"></span> Loading…</p>
+    <button type="button" id="open-training" class="secondary">Train smart filing…</button>
   </section>
 
   <section class="card">

@@ -13,6 +13,10 @@ import com.sun.mail.imap.protocol.IMAPProtocol
 import com.sun.mail.imap.IMAPStore
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -108,6 +112,12 @@ private class PendingRemoval(
     val limited: List<String>,
 )
 
+/** Where a session remembers its folder list between sign-ins. */
+interface FolderStore {
+    fun load(): List<FolderInfo>?
+    fun save(folders: List<FolderInfo>)
+}
+
 /** A message read and parsed for display, kept briefly so loading its images doesn't fetch it again. */
 class OpenedMessage(
     val summary: MessageSummary,
@@ -134,13 +144,21 @@ class MailClient(
     server: ServerConfig = ServerConfig.ICLOUD,
     /** How long removals wait before going to iCloud. */
     private val undoMs: Long = UNDO_MS,
+    /** Where the folder list is remembered between sign-ins (sealed), if anywhere. */
+    private val folderStore: FolderStore? = null,
 ) : AutoCloseable {
     private val connector = ImapConnector(server)
     private val lock = Mutex()
     private var store: IMAPStore? = null
     private var folder: IMAPFolder? = null
     private var passwordOverride: String? = null
-    private var knownFolders: List<FolderInfo> = emptyList()
+    @Volatile private var knownFolders: List<FolderInfo> = emptyList()
+    @Volatile private var knownAt = 0L
+    private var refreshing: Job? = null
+
+    /** Tells pages the folder list changed by itself (a background refresh found something). */
+    private val _folderChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val folderChanges: SharedFlow<Unit> = _folderChanges.asSharedFlow()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val pending = LinkedHashMap<String, PendingRemoval>()
     private val opened = object : LinkedHashMap<String, OpenedMessage>(16, 0.75f, true) {
@@ -163,8 +181,59 @@ class MailClient(
                 )
             }
             .sortedWith(compareBy({ FolderRole.valueOf(it.role.uppercase()).sortOrder }, { it.id.lowercase() }))
-            .also { knownFolders = it }
-    }.let(::withPendingCounts)
+    }.also(::remember).let(::withPendingCounts)
+
+    /**
+     * The folder list without asking iCloud: as remembered from earlier, in this session or (sealed)
+     * from the last. When it's older than [FULL_REFRESH_MS], a full refresh starts in the background
+     * and pages hear about any change through [folderChanges]. Only the very first time ever does
+     * this wait for iCloud.
+     */
+    suspend fun cachedFolders(): List<FolderInfo> {
+        if (knownFolders.isEmpty()) folderStore?.load()?.takeIf { it.isNotEmpty() }?.let { knownFolders = it }
+        if (knownFolders.isEmpty()) return folders()
+        if (System.currentTimeMillis() - knownAt > FULL_REFRESH_MS) refreshInBackground()
+        return withPendingCounts(knownFolders)
+    }
+
+    private fun refreshInBackground() = synchronized(this) {
+        if (refreshing?.isActive == true) return
+        refreshing = scope.launch { runCatching { folders() } }
+    }
+
+    private fun remember(fresh: List<FolderInfo>) {
+        val changed = fresh != knownFolders
+        knownFolders = fresh
+        knownAt = System.currentTimeMillis()
+        if (changed) {
+            runCatching { folderStore?.save(fresh) }
+            _folderChanges.tryEmit(Unit)
+        }
+    }
+
+    /** Updates one remembered folder's counts, as just seen on iCloud. */
+    private fun rememberCounts(folderId: String, unread: Int, total: Int, announce: Boolean) {
+        val current = knownFolders
+        val updated = current.map { if (it.id == folderId) it.copy(unread = unread.coerceAtLeast(0), total = total.coerceAtLeast(0)) else it }
+        if (updated == current) return
+        knownFolders = updated
+        runCatching { folderStore?.save(updated) }
+        if (announce) _folderChanges.tryEmit(Unit)
+    }
+
+    /** Freshens these folders' remembered counts, as when IDLE reports a change in one. */
+    suspend fun refreshFolderCounts(folderIds: Collection<String>) = run { store -> refreshCounts(store, folderIds) }
+
+    /** Asks iCloud for just these folders' counts, after something changed in them. */
+    private fun refreshCounts(store: IMAPStore, folderIds: Collection<String>) {
+        for (id in folderIds.toSet()) {
+            runCatching {
+                val open = folder?.takeIf { it.fullName == id && it.isOpen }
+                val f = open ?: (store.getFolder(id) as IMAPFolder)
+                rememberCounts(id, f.unreadMessageCount, f.messageCount, announce = true)
+            }
+        }
+    }
 
     /** Counts as they'll be once the changes waiting to be sent have gone through. */
     private fun withPendingCounts(folders: List<FolderInfo>): List<FolderInfo> {
@@ -187,6 +256,8 @@ class MailClient(
         // A folder kept open since last time only hears about new mail when it asks; NOOP asks.
         f.doCommand { protocol -> (protocol as IMAPProtocol).noop(); null }
         val count = f.messageCount
+        // Looking at a folder is a chance to keep its counts right, without asking for every folder.
+        runCatching { rememberCounts(folderId, f.unreadMessageCount, count, announce = false) }
         val end = minOf(before?.minus(1) ?: count, count)
         val start = maxOf(1, end - size + 1)
         val messages = if (end < 1) emptyArray() else f.getMessages(start, end)
@@ -231,6 +302,7 @@ class MailClient(
         val f = open(store, folderId, validity)
         val messages = f.getMessagesByUID(uids.toLongArray()).filterNotNull().toTypedArray()
         if (messages.isNotEmpty()) f.setFlags(messages, Flags(flag), value)
+        if (flag == Flags.Flag.SEEN) runCatching { rememberCounts(folderId, f.unreadMessageCount, f.messageCount, announce = false) }
         synchronized(opened) { opened.keys.removeIf { it.startsWith("$folderId\u0000$validity\u0000") } }
     }
 
@@ -267,6 +339,7 @@ class MailClient(
         if (!f.exists()) throw ApiError(HttpStatusCode.NotFound, "There's no ${folderId.substringAfterLast('/')} folder.")
         message.setFlags(flags, true)
         f.appendMessages(arrayOf(message))
+        refreshCounts(store, listOf(folderId))
         synchronized(opened) { opened.keys.removeIf { it.startsWith("$folderId\u0000") } }
     }
 
@@ -282,6 +355,7 @@ class MailClient(
         val message = f.getMessageByUID(uid) ?: return@run
         message.setFlag(Flags.Flag.DELETED, true)
         if (store.hasCapability("UIDPLUS")) f.expunge(arrayOf(message)) else f.expunge()
+        refreshCounts(store, listOf(folderId))
         synchronized(opened) { opened.keys.removeIf { it.startsWith("$folderId\u0000") } }
     }
 
@@ -439,17 +513,18 @@ class MailClient(
     }
 
     /** The folders as last listed, without asking iCloud again unless there's no list yet. */
-    suspend fun knownFolders(): List<FolderInfo> = knownFolders.ifEmpty { folders() }
+    suspend fun knownFolders(): List<FolderInfo> {
+        if (knownFolders.isEmpty()) cachedFolders()
+        return knownFolders
+    }
 
     /** The folder Delete and Archive move to, from the folders seen so far. */
     suspend fun folderWithRole(role: FolderRole): FolderInfo? {
-        if (knownFolders.isEmpty()) folders()
-        return knownFolders.find { it.role == role.name.lowercase() }
+        return knownFolders().find { it.role == role.name.lowercase() }
     }
 
     suspend fun roleOf(folderId: String): FolderRole {
-        if (knownFolders.isEmpty()) folders()
-        return knownFolders.find { it.id == folderId }?.role?.let { FolderRole.valueOf(it.uppercase()) } ?: FolderRole.CUSTOM
+        return knownFolders().find { it.id == folderId }?.role?.let { FolderRole.valueOf(it.uppercase()) } ?: FolderRole.CUSTOM
     }
 
     /** Sends a waiting removal to iCloud now. */
@@ -473,6 +548,8 @@ class MailClient(
                 // Without UIDPLUS, expunging can only clear every deleted message in the folder.
                 if (store.hasCapability("UIDPLUS")) f.expunge(messages) else f.expunge()
             }
+            // Only the two folders involved need fresh counts.
+            run { store -> refreshCounts(store, listOfNotNull(removal.folder, removal.target)) }
         } catch (e: Exception) {
             System.err.println("Couldn't send a change to iCloud: ${e::class.simpleName}")
         }
@@ -615,6 +692,9 @@ class MailClient(
         const val MAX_DOWNLOAD = 60L * 1024 * 1024
         /** How long a removal waits before going to iCloud, as in the app. */
         const val UNDO_MS = 6_000L
+
+        /** How old the remembered folder list may get before a full refresh in the background. */
+        const val FULL_REFRESH_MS = 10 * 60 * 1000L
 
         /** As in the app: the newest matches in each folder. */
         const val SEARCH_PER_FOLDER = 50

@@ -37,7 +37,7 @@ val FILING_TARGETS = setOf(FolderRole.CUSTOM, FolderRole.ARCHIVE)
 )
 @Serializable data class UndoBody(val id: String)
 @Serializable data class TrainBody(val folders: List<String>)
-@Serializable data class FilingFolder(val id: String, val name: String, val trained: Boolean, val examples: Int)
+@Serializable data class FilingFolder(val id: String, val name: String, val trained: Boolean, val examples: Int, val total: Int = 0)
 @Serializable data class FilingReply(val examples: Int, val folders: List<FilingFolder>, val status: TrainingStatus)
 @Serializable data class SuggestReply(val trained: Boolean, val suggestions: List<FilingSuggestion>)
 @Serializable data class UndoReply(val undone: Boolean)
@@ -52,9 +52,11 @@ private fun ApplicationCall.longParam(name: String): Long =
 
 /** Reading mail: folders, message lists, messages, their attachments, and marking them read. */
 fun Route.mailRoutes(services: Services) = route("/api") {
+    // The remembered folder list, at once; ?fresh=1 (the refresh button) asks iCloud for all of it.
     get("/folders") {
         val session = call.requireSession(services)
-        call.respond(services.mail(session).folders())
+        val mail = services.mail(session)
+        call.respond(if (call.request.queryParameters["fresh"] == "1") mail.folders() else mail.cachedFolders())
     }
 
     get("/messages") {
@@ -168,8 +170,8 @@ fun Route.mailRoutes(services: Services) = route("/api") {
         val data = filing.snapshot()
         val counts = data.examples.groupingBy { it.folder }.eachCount()
         val trained = data.trained.map { it.fullName }.toSet()
-        val folders = mail.folders().filter { FolderRole.valueOf(it.role.uppercase()) in FILING_TARGETS }
-            .map { FilingFolder(it.id, it.name, it.id in trained, counts[it.id] ?: 0) }
+        val folders = mail.knownFolders().filter { FolderRole.valueOf(it.role.uppercase()) in FILING_TARGETS }
+            .map { FilingFolder(it.id, it.name, it.id in trained, counts[it.id] ?: 0, it.total) }
         call.respond(FilingReply(data.examples.size, folders, filing.status))
     }
 

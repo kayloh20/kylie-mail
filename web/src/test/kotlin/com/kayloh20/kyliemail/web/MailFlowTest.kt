@@ -340,7 +340,7 @@ class MailFlowTest {
         train("Receipts")
         val trained = filing()
         assertEquals(5, trained.examples)
-        assertEquals(FilingFolder("Receipts", "Receipts", trained = true, examples = 5), trained.folders.last())
+        assertEquals(FilingFolder("Receipts", "Receipts", trained = true, examples = 5, total = 5), trained.folders.last())
 
         val suggestion = suggest(inbox, listOf(order.uid)).suggestions.first()
         assertEquals("Receipts", suggestion.folder)
@@ -700,5 +700,54 @@ class MailFlowTest {
         assertEquals(before, session.lastSeenAt, "listening isn't using the page")
         token = null
         assertEquals(HttpStatusCode.Unauthorized, get("/api/events").status)
+    }
+
+    // The folder list is remembered
+
+    @Test
+    fun theFolderListIsRememberedAndRefreshedOnRequest() = server {
+        val first = folders().map { it.name }
+        mail.createFolder("Travel")
+        // Remembered: no need to ask iCloud about every folder again.
+        assertEquals(first, folders().map { it.name })
+        // The refresh button asks for all of it.
+        val fresh = get("/api/folders?fresh=1").read(ListSerializer(FolderInfo.serializer()))
+        assertTrue("Travel" in fresh.map { it.name })
+        assertTrue("Travel" in folders().map { it.name })
+    }
+
+    @Test
+    fun theFolderListIsSealedAndReadyAtTheNextSignIn() = server {
+        folders()
+        val sealed = folder.root.resolve("folders.sealed").readBytes()
+        assertFalse("Receipts" in String(sealed, Charsets.ISO_8859_1), "folder names are sealed")
+
+        mail.createFolder("Later")
+        post("/api/signout", "{}")
+        token = services.sessions.create(accountKey)
+        // Straight from the sealed list, without waiting for iCloud...
+        assertFalse("Later" in folders().map { it.name })
+        // ...which is refreshed in the background, since it's from an earlier session.
+        eventually("the new folder shows up") { "Later" in folders().map { it.name } }
+    }
+
+    @Test
+    fun countsStayRightWithoutAskingForEveryFolder() = server {
+        folders()
+        val inbox = inbox()
+        val mom = inbox.messages.first { it.subject == "Dinner Sunday?" }
+        // Read: the inbox count drops.
+        post("/api/messages/flags", """{"folder":"INBOX","validity":${inbox.validity},"uids":[${mom.uid}],"flag":"seen","value":true}""").read(Done.serializer())
+        assertEquals(3, folders().first { it.name == "Inbox" }.unread)
+        // Moved: both folders' counts follow once it's done.
+        remove(inbox, listOf(mom.uid), "move", "Receipts").read(Removal.serializer())
+        eventually("counts follow the move") {
+            val now = folders().associateBy { it.name }
+            now.getValue("Inbox").total == 3 && now.getValue("Receipts").total == 6
+        }
+        // New mail: looking at the folder updates it.
+        mail.deliver(mail.message("Madison <madison@example.org>", "One more") { setText("Hi") })
+        inbox()
+        assertEquals(4, folders().first { it.name == "Inbox" }.unread)
     }
 }
