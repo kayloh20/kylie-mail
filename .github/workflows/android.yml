@@ -70,7 +70,9 @@ jobs:
 
       - name: Show version
         run: |
-          "$ANDROID_HOME"/build-tools/*/aapt2 dump badging "app/build/outputs/apk/release/kylie-mail-$VERSION_CODE.apk" \
+          # The runner has several build-tools versions; use the newest one's aapt2.
+          AAPT2=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
+          "$AAPT2" dump badging "app/build/outputs/apk/release/kylie-mail-$VERSION_CODE.apk" \
             | head -1 | tee /dev/stderr | grep -q "versionCode='$VERSION_CODE'"
 
       - name: Upload APK

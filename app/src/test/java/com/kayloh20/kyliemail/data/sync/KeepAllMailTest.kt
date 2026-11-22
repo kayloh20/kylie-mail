@@ -4,7 +4,7 @@ import android.app.Application
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.icegreen.greenmail.util.GreenMail
-import com.icegreen.greenmail.util.ServerSetupTest
+import com.icegreen.greenmail.util.ServerSetup
 import com.kayloh20.kyliemail.data.account.Account
 import com.kayloh20.kyliemail.data.account.AccountSource
 import com.kayloh20.kyliemail.data.db.MailDatabase
@@ -50,7 +50,8 @@ class KeepAllMailTest {
     private val inboxCount = 650
 
     @Before fun setUp() {
-        server = GreenMail(ServerSetupTest.SMTP_IMAP).apply { start() }
+        // Any free ports, so test classes running side by side never collide.
+        server = GreenMail(arrayOf(ServerSetup(0, "127.0.0.1", ServerSetup.PROTOCOL_SMTP), ServerSetup(0, "127.0.0.1", ServerSetup.PROTOCOL_IMAP))).apply { start() }
         val account = server.setUser(user, user, "pw")
         for (i in 1..inboxCount) {
             account.deliver(plain("Newsletter $i", if (i == 1) "The very first email mentions a narwhal." else "Issue number $i.", i))
@@ -67,7 +68,7 @@ class KeepAllMailTest {
         val accounts = object : AccountSource {
             override val account: StateFlow<Account?> = MutableStateFlow(Account(user, user, "pw"))
         }
-        val connector = ImapConnector(ServerConfig("127.0.0.1", ServerSetupTest.IMAP.port, "127.0.0.1", ServerSetupTest.SMTP.port, tls = false))
+        val connector = ImapConnector(ServerConfig("127.0.0.1", server.imap.port, "127.0.0.1", server.smtp.port, tls = false))
         engine = SyncEngine(db, accounts, connector, InlineImageStore(Files.createTempDirectory("inline").toFile()))
     }
 
@@ -103,7 +104,7 @@ class KeepAllMailTest {
 
     private fun <T> imap(block: (javax.mail.Store) -> T): T {
         val store = session.getStore("imap")
-        store.connect("127.0.0.1", ServerSetupTest.IMAP.port, user, "pw")
+        store.connect("127.0.0.1", server.imap.port, user, "pw")
         return try { block(store) } finally { store.close() }
     }
 

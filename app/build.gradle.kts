@@ -85,6 +85,9 @@ android {
             it.systemProperty("roborazzi.test.record", "true")
             // Each Robolectric test loads a whole Android app: give them room.
             it.maxHeapSize = "2g"
+            // Run test classes side by side, up to 4 at a time (about 8 GB at most). On CI's 4 cores this
+            // takes the tests from about 4.4 to 3 minutes; KeepAllMailTest, the slowest class, sets the floor.
+            it.maxParallelForks = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
             // CI skips them: they download a 200 MB Android runtime and are for looking at, not pass/fail.
             if (System.getenv("CI") == "true") it.filter.excludeTestsMatching("*ScreenshotTest")
         }

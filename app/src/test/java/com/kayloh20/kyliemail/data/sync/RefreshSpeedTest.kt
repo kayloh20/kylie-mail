@@ -4,7 +4,7 @@ import android.app.Application
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.icegreen.greenmail.util.GreenMail
-import com.icegreen.greenmail.util.ServerSetupTest
+import com.icegreen.greenmail.util.ServerSetup
 import com.kayloh20.kyliemail.data.account.Account
 import com.kayloh20.kyliemail.data.account.AccountSource
 import com.kayloh20.kyliemail.data.db.MailDatabase
@@ -52,9 +52,10 @@ class RefreshSpeedTest {
     private val folderCount = 40
 
     @Before fun setUp() {
-        server = GreenMail(ServerSetupTest.SMTP_IMAP).apply { start() }
+        // Any free ports, so test classes running side by side never collide.
+        server = GreenMail(arrayOf(ServerSetup(0, "127.0.0.1", ServerSetup.PROTOCOL_SMTP), ServerSetup(0, "127.0.0.1", ServerSetup.PROTOCOL_IMAP))).apply { start() }
         server.setUser(user, user, "pw")
-        val store = session.getStore("imap").apply { connect("127.0.0.1", ServerSetupTest.IMAP.port, user, "pw") }
+        val store = session.getStore("imap").apply { connect("127.0.0.1", server.imap.port, user, "pw") }
         for (i in 1..folderCount) {
             val folder = store.getFolder("Project $i").apply { create(Folder.HOLDS_MESSAGES) }
             folder.appendMessages(arrayOf(message("Note $i"), message("Unread $i")))
@@ -63,7 +64,7 @@ class RefreshSpeedTest {
             folder.close(false)
         }
         store.close()
-        proxy = SilentProxy(ServerSetupTest.IMAP.port)
+        proxy = SilentProxy(server.imap.port)
         db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), MailDatabase::class.java)
             .addCallback(MailDatabase.searchTriggers)
             .allowMainThreadQueries()
@@ -71,7 +72,7 @@ class RefreshSpeedTest {
         val accounts = object : AccountSource {
             override val account: StateFlow<Account?> = MutableStateFlow(Account(user, user, "pw"))
         }
-        val connector = ImapConnector(ServerConfig("127.0.0.1", proxy.port, "127.0.0.1", ServerSetupTest.SMTP.port, tls = false))
+        val connector = ImapConnector(ServerConfig("127.0.0.1", proxy.port, "127.0.0.1", server.smtp.port, tls = false))
         engine = SyncEngine(db, accounts, connector, InlineImageStore(Files.createTempDirectory("inline").toFile()))
     }
 
