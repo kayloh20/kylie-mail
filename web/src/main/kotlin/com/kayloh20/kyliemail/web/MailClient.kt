@@ -6,7 +6,10 @@ import com.kayloh20.kyliemail.data.mail.FolderRole
 import com.kayloh20.kyliemail.data.mail.ImapConnector
 import com.kayloh20.kyliemail.data.mail.ParsedBody
 import com.kayloh20.kyliemail.data.mail.ServerConfig
+import com.kayloh20.kyliemail.data.search.SearchQuery
+import com.kayloh20.kyliemail.data.search.ServerSearch
 import com.sun.mail.imap.IMAPFolder
+import com.sun.mail.imap.protocol.IMAPProtocol
 import com.sun.mail.imap.IMAPStore
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CoroutineScope
@@ -94,6 +97,15 @@ private class PendingRemoval(
     val target: String?,
     val unseen: Int,
     var job: Job? = null,
+)
+
+@Serializable data class SearchHit(val folder: String, val validity: Long, val summary: MessageSummary)
+@Serializable data class SkippedFolder(val name: String, val reason: String)
+@Serializable data class SearchResults(
+    val hits: List<SearchHit>,
+    val skipped: List<SkippedFolder>,
+    /** Folders with more matches than were returned (only the newest come back). */
+    val limited: List<String>,
 )
 
 /** A message read and parsed for display, kept briefly so loading its images doesn't fetch it again. */
@@ -314,6 +326,51 @@ class MailClient(
 
     /** The password, for sending mail with the same account. */
     fun passwordForSending(): String? = passwordOverride ?: password()
+
+    private val searchGeneration = java.util.concurrent.atomic.AtomicLong()
+
+    /**
+     * Asks iCloud which messages match [terms] in each of [folders], the newest [perFolder] of
+     * them, as the app's server search does. One folder at a time, so the connection is never held
+     * for long; a newer search makes an older one stop between folders.
+     */
+    suspend fun search(terms: List<SearchQuery.ServerTerm>, folders: List<FolderInfo>, perFolder: Int = SEARCH_PER_FOLDER): SearchResults {
+        val term = ServerSearch.term(terms) ?: throw ApiError(HttpStatusCode.BadRequest, "Type something to search for.")
+        val mine = searchGeneration.incrementAndGet()
+        val hits = mutableListOf<SearchHit>()
+        val skipped = mutableListOf<SkippedFolder>()
+        val limited = mutableListOf<String>()
+        for (folder in folders) {
+            if (searchGeneration.get() != mine) throw ApiError(HttpStatusCode.Conflict, "A newer search replaced this one.")
+            try {
+                run { store ->
+                    val f = open(store, folder.id)
+                    val numbers = f.doCommand { protocol -> (protocol as IMAPProtocol).search(term) } as? IntArray
+                        ?: throw ApiError(HttpStatusCode.BadGateway, "iCloud couldn't run this search there")
+                    val newest = numbers.sortedDescending()
+                    if (newest.size > perFolder) limited += folder.name
+                    val messages = f.getMessages(newest.take(perFolder).toIntArray())
+                    f.fetch(messages, FetchProfile().apply {
+                        add(FetchProfile.Item.ENVELOPE)
+                        add(FetchProfile.Item.FLAGS)
+                        add(FetchProfile.Item.CONTENT_INFO)
+                        add(UIDFolder.FetchProfileItem.UID)
+                    })
+                    val leaving = synchronized(pending) {
+                        pending.values.filter { it.folder == folder.id && it.validity == f.uidValidity }.flatMap { it.uids }.toSet()
+                    }
+                    for (m in messages) {
+                        val summary = runCatching { summary(f, m) }.getOrNull() ?: continue
+                        if (summary.uid !in leaving) hits += SearchHit(folder.id, f.uidValidity, summary)
+                    }
+                }
+            } catch (e: ApiError) {
+                if (e.status == HttpStatusCode.Conflict) throw e
+                skipped += SkippedFolder(folder.name, e.message ?: "it couldn't be searched")
+            }
+        }
+        return SearchResults(hits.sortedByDescending { it.summary.date }, skipped, limited)
+    }
 
     /** Sender, recipients and subject of [uids], for smart filing. */
     suspend fun features(folderId: String, validity: Long, uids: List<Long>): List<MessageFeatures> = run { store ->
@@ -556,6 +613,9 @@ class MailClient(
         const val MAX_DOWNLOAD = 60L * 1024 * 1024
         /** How long a removal waits before going to iCloud, as in the app. */
         const val UNDO_MS = 6_000L
+
+        /** As in the app: the newest matches in each folder. */
+        const val SEARCH_PER_FOLDER = 50
 
         /** How many recent messages in Inbox and Sent contacts are gathered from. */
         private const val CONTACT_DEPTH = 500

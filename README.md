@@ -21,8 +21,8 @@ suggested filing.
 ## On the web
 
 The web version lives in [`web/`](web/README.md) and runs on its own server. It does what the
-app does on a big screen: passkey sign-in, reading, deleting, moving, flagging, smart filing and
-writing in plain text.
+app does on a big screen: passkey sign-in, reading, deleting, moving, flagging, smart filing,
+writing in plain text and search.
 
 ## Signing in
 

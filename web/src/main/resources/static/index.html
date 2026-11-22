@@ -102,6 +102,10 @@
         <button type="button" id="refresh" class="icon" title="Refresh" aria-label="Refresh">↻</button>
       </div>
     </header>
+    <div class="search-row" role="search">
+      <input type="search" id="search" placeholder="Search mail" aria-label="Search mail (/ or ⌘/Ctrl+F)" title="Try from:, to:, subject:, body: or &quot;a phrase&quot;" autocomplete="off" spellcheck="false" enterkeyhint="search">
+      <label class="check search-scope" id="search-scope" hidden><input type="checkbox" id="search-all" checked> All folders</label>
+    </div>
     <p id="recovered" class="warning" hidden>You signed in with a recovery code. Add a passkey in Settings so you don't run out.</p>
     <p id="list-status" class="note pad" role="status"></p>
     <ul id="message-list" class="messages" role="listbox" aria-label="Messages" tabindex="0"></ul>

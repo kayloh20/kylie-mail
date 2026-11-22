@@ -556,4 +556,55 @@ class MailFlowTest {
         assertTrue(Contact("Mom", "mom@example.org") in contacts, contacts.toString())
         assertTrue(Contact("Shop", "orders@shop.example") in contacts, contacts.toString())
     }
+
+    // Search. GreenMail only matches whole addresses for FROM and TO, where iCloud, like the IMAP
+    // standard, matches any part, so these tests search subjects and bodies; SharedCodeTest checks
+    // that from: and to: become the right IMAP terms.
+
+    private suspend fun Browser.search(q: String, folder: String? = null) =
+        get("/api/search?q=${q.encodeURLParameter()}" + (folder?.let { "&folder=${it.encodeURLParameter()}" } ?: ""))
+
+    private suspend fun Browser.found(q: String, folder: String? = null) =
+        search(q, folder).read(SearchResults.serializer()).hits.map { it.folder to it.summary.subject }
+
+    @Test
+    fun searchFindsWordsAnywhereAcrossFolders() = server {
+        // In the body, as the start of a word.
+        assertEquals(listOf("INBOX" to "Pep rally!!"), found("pom"))
+        // Orders: the one in the inbox and the five filed in Receipts, newest first.
+        val orders = found("order")
+        assertEquals(6, orders.size, orders.toString())
+        assertEquals("INBOX" to "Your order has shipped", orders.first())
+        assertEquals(5, orders.count { it.first == "Receipts" })
+        // Every word must match; a quoted phrase is kept together.
+        assertEquals(listOf("Receipts" to "Order #3 confirmed"), found("order 3 confirmed").filter { it.second.startsWith("Order #3") })
+        assertEquals(listOf("INBOX" to "Your order has shipped"), found("subject:\"order has\""))
+        assertEquals(emptyList(), found("narwhal"))
+    }
+
+    @Test
+    fun searchCanStayInOneFolder() = server {
+        assertEquals(List(5) { "Receipts" }, found("order", "Receipts").map { it.first })
+        assertEquals(HttpStatusCode.NotFound, search("shop", "Nope").status)
+        assertEquals(HttpStatusCode.BadRequest, search("   ").status)
+        assertEquals(HttpStatusCode.BadRequest, search("!!!").status)
+    }
+
+    @Test
+    fun searchLeavesOutMessagesOnTheirWayOut() = server(undoMs = 60_000) {
+        val inbox = inbox()
+        val pep = inbox.messages.first { it.subject == "Pep rally!!" }
+        remove(inbox, listOf(pep.uid), "delete").read(Removal.serializer())
+        assertEquals(emptyList(), found("pom"))
+    }
+
+    @Test
+    fun searchResultsCarryTheirFolder() = server {
+        val hit = search("dinner").read(SearchResults.serializer()).hits.single()
+        assertEquals("INBOX", hit.folder)
+        assertEquals(inbox().validity, hit.validity)
+        // Enough to open it.
+        val detail = get("/api/message?folder=INBOX&validity=${hit.validity}&uid=${hit.summary.uid}").read(MessageDetail.serializer())
+        assertEquals("Dinner Sunday?", detail.summary.subject)
+    }
 }

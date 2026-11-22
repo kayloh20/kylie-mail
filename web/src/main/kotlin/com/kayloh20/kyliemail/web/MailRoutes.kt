@@ -15,6 +15,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import com.kayloh20.kyliemail.data.mail.FolderRole
+import com.kayloh20.kyliemail.data.search.SearchQuery
 import kotlinx.serialization.Serializable
 import javax.mail.Flags
 
@@ -144,6 +145,18 @@ fun Route.mailRoutes(services: Services) = route("/api") {
         val undone = services.mail(session).undo(id)
         if (undone) session.filing?.forgetMoves(id)
         call.respond(UndoReply(undone))
+    }
+
+    // Search: from:, to:, subject:, body: and "quoted phrases", as in the app.
+    get("/search") {
+        val session = call.requireSession(services)
+        val query = SearchQuery.parse(call.param("q").take(500))
+        if (query.serverTerms.isEmpty()) throw ApiError(HttpStatusCode.BadRequest, "Type something to search for.")
+        val mail = services.mail(session)
+        val only = call.request.queryParameters["folder"]
+        val folders = mail.knownFolders().let { all -> if (only != null) all.filter { it.id == only } else all }
+        if (folders.isEmpty()) throw ApiError(HttpStatusCode.NotFound, "That folder doesn't exist any more.")
+        call.respond(mail.search(query.serverTerms, folders))
     }
 
     // Smart filing.

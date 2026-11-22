@@ -7,6 +7,13 @@ import com.kayloh20.kyliemail.data.filing.FilingExample
 import com.kayloh20.kyliemail.data.filing.FilingFeatures
 import com.kayloh20.kyliemail.data.filing.FilingModel
 import com.kayloh20.kyliemail.data.mail.ImapConnector
+import com.kayloh20.kyliemail.data.search.SearchQuery
+import com.kayloh20.kyliemail.data.search.ServerSearch
+import javax.mail.search.AndTerm
+import javax.mail.search.FromStringTerm
+import javax.mail.search.OrTerm
+import javax.mail.search.SubjectTerm
+import kotlin.test.assertTrue
 import org.junit.Test
 import java.time.ZoneOffset
 import java.util.Locale
@@ -41,5 +48,22 @@ class SharedCodeTest {
     @Test
     fun iCloudUsernamesMatchTheApp() {
         assertEquals(listOf("me@icloud.com", "me"), ImapConnector.usernameCandidates("me@icloud.com"))
+    }
+
+    @Test
+    fun searchUnderstandsFiltersLikeTheApp() {
+        val query = SearchQuery.parse("from:shop subject:\"order has\" pom")
+        assertEquals(
+            listOf(
+                SearchQuery.ServerTerm("shop", SearchQuery.Field.FROM),
+                SearchQuery.ServerTerm("order has", SearchQuery.Field.SUBJECT),
+                SearchQuery.ServerTerm("pom", null),
+            ),
+            query.serverTerms,
+        )
+        val term = ServerSearch.term(query.serverTerms) as AndTerm
+        assertTrue(term.terms[0] is FromStringTerm)
+        assertTrue(term.terms[1] is SubjectTerm)
+        assertTrue(term.terms[2] is OrTerm, "a plain word matches anywhere")
     }
 }

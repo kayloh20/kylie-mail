@@ -6,9 +6,10 @@ and smart filing.
 
 ## Status
 
-Everything the plan set out: passkey sign-in with recovery codes, reading, deleting, archiving,
-moving and flagging with undo, smart filing, and writing in plain text. Not yet: search, and
-notifications in the browser (your phone still gets them through the push relay).
+Everything the plan set out, plus search: passkey sign-in with recovery codes, reading, deleting,
+archiving, moving and flagging with undo, smart filing, writing in plain text, and searching all
+your folders. Not yet: notifications in the browser (your phone still gets them through the push
+relay).
 
 ## Signing in
 
@@ -58,6 +59,7 @@ Like the app on a big screen:
 | Reply, reply all, forward | Right-click, toolbar | <kbd>R</kbd>, <kbd>A</kbd>, <kbd>F</kbd> |
 | Edit a draft | In Drafts: toolbar, right-click | <kbd>Enter</kbd> |
 | Clear the selection | | <kbd>Esc</kbd> |
+| Search | Search box | <kbd>/</kbd> or <kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>F</kbd>, <kbd>Esc</kbd> to leave |
 
 Deleting moves to Trash; deleting from Trash deletes for good. As in the app, deletes, archives and
 moves wait 6 seconds before reaching iCloud, so Undo is instant. The wait happens on the server, so
@@ -79,6 +81,18 @@ the sender's company and words in the subject. No AI, and never the message itse
   Move picker.
 - **What it learns is sealed** with your account key in `filing.sealed`, like the password, and is
   only opened in memory while you're signed in.
+
+## Search
+
+The search box above the list searches every folder as you type, or just the open one with *All
+folders* unchecked. Like the app, it understands `from:`, `to:`, `subject:` and `body:`, and
+"quoted phrases"; other words match anywhere, every word must match, and part of a word counts
+("madi" finds Madison). Results show which folder each is in, and you can open, reply to, delete,
+move or flag them, even several from different folders at once, with Undo as usual.
+
+iCloud does the searching (IMAP SEARCH, with the app's own query parser), so nothing about your
+mail is indexed or stored on the server. It returns the newest 50 matches in each folder, as the
+app's server search does, and says which folders had more or couldn't be searched.
 
 ## Writing
 

@@ -281,6 +281,9 @@ const mail = {
   detail: null, // the open message
   loadToken: 0,
   lastRemoval: null, // the last delete or move, for Undo
+  listId: "", // what the list shows: a folder or a search
+  search: null, // { q, scope } while searching
+  items: new Map(), // list rows by message key
   undo: null, // what Undo does right now
   suggest: { key: "", trained: true, list: [] }, // smart filing's ideas for the selection
 };
@@ -326,15 +329,25 @@ function folderWithRole(role) {
   return mail.folders.find((f) => f.role === role);
 }
 
+function folderById(id) {
+  return mail.folders.find((f) => f.id === id);
+}
+
+function roleOf(folderId) {
+  const folder = folderById(folderId);
+  return folder ? folder.role : "custom";
+}
+
+/** Archive works when there's an Archive folder and none of the selection is already there. */
 function canArchive() {
-  const current = currentFolder();
-  return !!folderWithRole("archive") && !!current && current.role !== "archive";
+  const chosen = selectedMessages();
+  return !!folderWithRole("archive") && chosen.length > 0 && chosen.every((m) => roleOf(m.folder) !== "archive");
 }
 
 /** Deleting from Trash, or when there's no Trash, deletes for good, as in the app. */
 function deletesForGood() {
-  const current = currentFolder();
-  return !folderWithRole("trash") || (current && current.role === "trash");
+  const chosen = selectedMessages();
+  return !folderWithRole("trash") || (chosen.length > 0 && chosen.every((m) => roleOf(m.folder) === "trash"));
 }
 
 async function openMailbox() {
@@ -351,6 +364,7 @@ async function loadFolders() {
 }
 
 function renderFolders() {
+  const showing = mail.search ? null : mail.folder;
   $("folder-list").replaceChildren(
     ...mail.folders.map((f) => {
       const showCount = f.unread > 0 && !["sent", "drafts", "trash", "junk"].includes(f.role);
@@ -361,7 +375,7 @@ function renderFolders() {
         showCount ? el("span", { className: "count", textContent: String(f.unread) }) : null,
       );
       button.style.paddingLeft = `${12 + f.depth * 14}px`;
-      button.setAttribute("aria-current", String(f.id === mail.folder));
+      button.setAttribute("aria-current", String(f.id === showing));
       button.onclick = () => openFolder(f.id);
       return el("li", {}, button);
     }),
@@ -374,30 +388,43 @@ function renderFolders() {
 }
 
 function adjustCounts(folderId, unread, total) {
-  const folder = mail.folders.find((f) => f.id === folderId);
+  const folder = folderById(folderId);
   if (!folder) return;
   folder.unread = Math.max(0, folder.unread + unread);
   folder.total = Math.max(0, folder.total + total);
 }
 
-async function openFolder(id) {
-  const token = ++mail.loadToken;
-  mail.folder = id;
+/** Each message remembers its folder: search results come from several. */
+function tag(folder, validity, message) {
+  return Object.assign(message, { folder, validity, key: `${folder}\n${message.uid}` });
+}
+
+function resetList(listId) {
+  mail.loadToken++;
+  mail.listId = listId;
   mail.messages = [];
+  mail.before = null;
   mail.selected.clear();
   mail.anchor = mail.cursor = null;
   syncReader();
+  $("message-list").replaceChildren();
+  $("load-older").hidden = true;
+  return mail.loadToken;
+}
+
+async function openFolder(id) {
+  mail.folder = id;
+  endSearch();
+  const token = resetList(`folder:${id}`);
   renderFolders();
   const folder = currentFolder();
   $("folder-title").textContent = folder ? folder.name : id;
-  $("message-list").replaceChildren();
-  $("load-older").hidden = true;
   $("list-status").textContent = "Loading…";
   try {
     const page = await api("GET", `/api/messages?folder=${encodeURIComponent(id)}`);
     if (token !== mail.loadToken) return;
     mail.validity = page.validity;
-    mail.messages = page.messages;
+    mail.messages = page.messages.map((m) => tag(page.folder, page.validity, m));
     mail.before = page.before;
     renderMessages();
   } catch (e) {
@@ -406,14 +433,14 @@ async function openFolder(id) {
 }
 
 async function loadOlder() {
-  if (!mail.before) return;
+  if (!mail.before || mail.search) return;
   const token = mail.loadToken;
   await busy($("load-older"), async () => {
     try {
       const page = await api("GET", `/api/messages?folder=${encodeURIComponent(mail.folder)}&before=${mail.before}`);
       if (token !== mail.loadToken) return;
-      const known = new Set(mail.messages.map((m) => m.uid));
-      mail.messages.push(...page.messages.filter((m) => !known.has(m.uid)));
+      const known = new Set(mail.messages.map((m) => m.key));
+      mail.messages.push(...page.messages.map((m) => tag(page.folder, page.validity, m)).filter((m) => !known.has(m.key)));
       mail.before = page.before;
       renderMessages();
     } catch (e) {
@@ -422,72 +449,141 @@ async function loadOlder() {
   });
 }
 
+// Search: from:, to:, subject:, body: and "quoted phrases", as in the app. iCloud does the
+// searching, so nothing about your mail is indexed on the server.
+
+let searchTimer = null;
+
+function searchWanted() {
+  const q = $("search").value.trim();
+  return q.length >= 2 || /[:"]/.test(q) ? q : "";
+}
+
+/** Searches a moment after typing stops, or right away on Enter. */
+function scheduleSearch(now = false) {
+  clearTimeout(searchTimer);
+  const q = searchWanted();
+  if (!q) {
+    if (mail.search && !$("search").value.trim()) openFolder(mail.folder);
+    return;
+  }
+  searchTimer = setTimeout(() => runSearch(q), now ? 0 : 400);
+}
+
+async function runSearch(q) {
+  const all = $("search-all").checked;
+  const scope = all ? null : mail.folder;
+  const listId = `search:${scope || "*"}:${q}`;
+  if (mail.search && mail.listId === listId) return;
+  mail.search = { q, scope };
+  const token = resetList(listId);
+  renderFolders();
+  $("search-scope").hidden = false;
+  $("folder-title").textContent = all ? "Search" : `Search in ${currentFolder() ? currentFolder().name : mail.folder}`;
+  $("list-status").textContent = "Searching iCloud…";
+  try {
+    const results = await api("GET", `/api/search?q=${encodeURIComponent(q)}${scope ? `&folder=${encodeURIComponent(scope)}` : ""}`);
+    if (token !== mail.loadToken) return;
+    mail.messages = results.hits.map((h) => tag(h.folder, h.validity, h.summary));
+    renderMessages();
+    const notes = [mail.messages.length ? plural(mail.messages.length, "result") : "Nothing found."];
+    if (results.limited.length) notes.push(`Only the newest 50 in ${results.limited.join(", ")}.`);
+    for (const skipped of results.skipped) notes.push(`Couldn't search ${skipped.name}: ${skipped.reason}.`);
+    $("list-status").textContent = notes.join(" ");
+  } catch (e) {
+    if (token === mail.loadToken && e.status !== 409) $("list-status").textContent = e.message;
+  }
+}
+
+function endSearch() {
+  clearTimeout(searchTimer);
+  mail.search = null;
+  $("search").value = "";
+  $("search-scope").hidden = true;
+}
+
+function focusSearch() {
+  if ($("app").classList.contains("reading") && window.matchMedia("(max-width: 1000px)").matches) clearSelection();
+  $("search").focus();
+  $("search").select();
+}
+
 // The message list
 
 function renderMessages() {
-  $("list-status").textContent = mail.messages.length ? "" : "No messages here.";
+  if (!mail.search) $("list-status").textContent = mail.messages.length ? "" : "No messages here.";
+  const showFolders = !!mail.search && !mail.search.scope;
+  mail.items = new Map();
   $("message-list").replaceChildren(
     ...mail.messages.map((m) => {
       const marks = [m.flagged ? "⚑" : "", m.hasAttachments ? "📎" : "", m.answered ? "↩" : ""].join(" ").trim();
+      const folder = showFolders ? folderById(m.folder) : null;
       const item = el(
         "li",
-        { id: `m-${m.uid}`, className: m.seen ? "" : "unread" },
+        { className: m.seen ? "" : "unread" },
         el("span", { className: "from", textContent: m.fromName || m.fromAddress || "(unknown sender)" }),
         el("span", { className: "date", textContent: listDate(m.date) }),
-        el("span", { className: "subject", textContent: m.subject }, marks ? el("span", { className: "marks", textContent: ` ${marks}` }) : null),
+        el("span", { className: "subject", textContent: m.subject },
+          marks ? el("span", { className: "marks", textContent: ` ${marks}` }) : null,
+          folder ? el("span", { className: "folder-tag", textContent: folder.name }) : null),
       );
-      item.dataset.uid = String(m.uid);
+      item.dataset.key = m.key;
       item.setAttribute("role", "option");
+      mail.items.set(m.key, item);
       return item;
     }),
   );
-  $("load-older").hidden = !mail.before;
+  $("load-older").hidden = !mail.before || !!mail.search;
   markSelected();
 }
 
 function markSelected() {
   for (const item of $("message-list").children) {
-    const uid = Number(item.dataset.uid);
-    item.setAttribute("aria-selected", String(mail.selected.has(uid)));
-    item.classList.toggle("cursor", uid === mail.cursor);
+    const key = item.dataset.key;
+    item.setAttribute("aria-selected", String(mail.selected.has(key)));
+    item.classList.toggle("cursor", key === mail.cursor);
   }
-  const current = $(`m-${mail.cursor}`);
+  const current = mail.items && mail.items.get(mail.cursor);
   if (current) current.scrollIntoView({ block: "nearest" });
 }
 
-function indexOf(uid) {
-  return mail.messages.findIndex((m) => m.uid === uid);
+function indexOf(key) {
+  return mail.messages.findIndex((m) => m.key === key);
 }
 
-function selectOnly(uid) {
-  mail.selected = new Set([uid]);
-  mail.anchor = mail.cursor = uid;
+function messageByKey(key) {
+  return mail.messages.find((m) => m.key === key);
+}
+
+function selectOnly(key) {
+  mail.selected = new Set([key]);
+  mail.anchor = mail.cursor = key;
   markSelected();
   syncReader();
 }
 
-function toggleSelected(uid) {
-  if (mail.selected.has(uid)) mail.selected.delete(uid);
-  else mail.selected.add(uid);
-  mail.anchor = mail.cursor = uid;
+function toggleSelected(key) {
+  if (mail.selected.has(key)) mail.selected.delete(key);
+  else mail.selected.add(key);
+  mail.anchor = mail.cursor = key;
   markSelected();
   syncReader();
 }
 
-function selectRangeTo(uid) {
-  const from = indexOf(mail.anchor ?? uid);
-  const to = indexOf(uid);
+function selectRangeTo(key) {
+  const from = indexOf(mail.anchor ?? key);
+  const to = indexOf(key);
   const [a, b] = from < to ? [from, to] : [to, from];
-  mail.selected = new Set(mail.messages.slice(Math.max(a, 0), b + 1).map((m) => m.uid));
-  mail.cursor = uid;
+  mail.selected = new Set(mail.messages.slice(Math.max(a, 0), b + 1).map((m) => m.key));
+  mail.cursor = key;
   markSelected();
   syncReader();
 }
 
 function selectAll() {
   if (!mail.messages.length) return;
-  mail.selected = new Set(mail.messages.map((m) => m.uid));
-  mail.anchor = mail.messages[0].uid;
+  mail.selected = new Set(mail.messages.map((m) => m.key));
+  mail.anchor = mail.messages[0].key;
   mail.cursor = mail.cursor ?? mail.anchor;
   markSelected();
   syncReader();
@@ -504,22 +600,22 @@ function step(by, extend) {
   if (!mail.messages.length) return;
   const index = indexOf(mail.cursor);
   const next = index < 0 ? 0 : Math.min(mail.messages.length - 1, Math.max(0, index + by));
-  const uid = mail.messages[next].uid;
+  const key = mail.messages[next].key;
   if (extend) {
-    if (mail.anchor === null) mail.anchor = mail.cursor ?? uid;
-    selectRangeTo(uid);
-  } else if (index !== next || !mail.selected.has(uid) || mail.selected.size !== 1) {
-    selectOnly(uid);
+    if (mail.anchor === null) mail.anchor = mail.cursor ?? key;
+    selectRangeTo(key);
+  } else if (index !== next || !mail.selected.has(key) || mail.selected.size !== 1) {
+    selectOnly(key);
   }
 }
 
 function onListClick(event) {
-  const item = event.target.closest("li[data-uid]");
+  const item = event.target.closest("li[data-key]");
   if (!item) return;
-  const uid = Number(item.dataset.uid);
-  if (event.shiftKey) selectRangeTo(uid);
-  else if (event.metaKey || event.ctrlKey) toggleSelected(uid);
-  else selectOnly(uid);
+  const key = item.dataset.key;
+  if (event.shiftKey) selectRangeTo(key);
+  else if (event.metaKey || event.ctrlKey) toggleSelected(key);
+  else selectOnly(key);
 }
 
 // The reader: one message, several selected, or nothing
@@ -543,12 +639,19 @@ function syncReader() {
     $("many-count").textContent = `${count} messages selected`;
     return;
   }
-  const uid = [...mail.selected][0];
-  if (!mail.detail || mail.detail.summary.uid !== uid || $("message").hidden) openMessage(uid);
+  const key = [...mail.selected][0];
+  const open = mail.detail && `${mail.detail.folder}\n${mail.detail.summary.uid}` === key;
+  if (!open || $("message").hidden) openMessage(key);
 }
 
 function selectedMessages() {
-  return mail.messages.filter((m) => mail.selected.has(m.uid));
+  return mail.messages.filter((m) => mail.selected.has(m.key));
+}
+
+/** The folder all the selected messages are in, or null when they're from several. */
+function selectionFolder() {
+  const folders = new Set(selectedMessages().map((m) => m.folder));
+  return folders.size === 1 ? [...folders][0] : null;
 }
 
 function updateToolbar() {
@@ -566,15 +669,17 @@ function updateToolbar() {
   buttons.editDraft.hidden = !single || !drafts;
 }
 
+/** Whether the one selected message is a draft. */
 function inDrafts() {
-  const current = currentFolder();
-  return !!current && current.role === "drafts";
+  const chosen = selectedMessages();
+  return chosen.length === 1 && roleOf(chosen[0].folder) === "drafts";
 }
 
 /** The one selected message, as the server knows it. */
 function selectedRef() {
-  if (mail.selected.size !== 1) return null;
-  return { folder: mail.folder, validity: mail.validity, uid: [...mail.selected][0] };
+  const chosen = selectedMessages();
+  if (chosen.length !== 1) return null;
+  return { folder: chosen[0].folder, validity: chosen[0].validity, uid: chosen[0].uid };
 }
 
 function bodyUrl(detail, images) {
@@ -582,30 +687,31 @@ function bodyUrl(detail, images) {
   return `/api/message/body?${q}${images ? "&images=1" : ""}`;
 }
 
-async function openMessage(uid) {
+async function openMessage(key) {
+  const summary = messageByKey(key);
+  if (!summary) return;
   $("reader-empty").hidden = true;
   $("message").hidden = false;
-  const summary = mail.messages.find((m) => m.uid === uid);
   mail.detail = null;
-  $("message-subject").textContent = summary ? summary.subject : "";
-  $("message-from").textContent = summary ? summary.fromName : "";
-  $("message-address").textContent = summary && summary.fromAddress !== summary.fromName ? `<${summary.fromAddress}>` : "";
-  $("message-date").textContent = summary && summary.date ? longDate.format(new Date(summary.date)) : "";
+  $("message-subject").textContent = summary.subject;
+  $("message-from").textContent = summary.fromName;
+  $("message-address").textContent = summary.fromAddress !== summary.fromName ? `<${summary.fromAddress}>` : "";
+  $("message-date").textContent = summary.date ? longDate.format(new Date(summary.date)) : "";
   $("message-to").textContent = "";
   $("images-bar").hidden = true;
   $("attachments").replaceChildren();
   $("message-status").textContent = "Loading…";
   $("message-body").hidden = true;
   $("message-body").removeAttribute("src");
-  const stillOpen = () => mail.selected.size === 1 && mail.selected.has(uid);
+  const stillOpen = () => mail.selected.size === 1 && mail.selected.has(key);
   try {
-    const detail = await api("GET", `/api/message?folder=${encodeURIComponent(mail.folder)}&validity=${mail.validity}&uid=${uid}`);
+    const detail = await api("GET", `/api/message?folder=${encodeURIComponent(summary.folder)}&validity=${summary.validity}&uid=${summary.uid}`);
     if (!stillOpen()) return;
     mail.detail = detail;
     showMessage(detail);
-    if (summary && !summary.seen) setFlag([uid], "seen", true);
+    if (!summary.seen) setFlag([key], "seen", true);
   } catch (e) {
-    if (stillOpen()) $("message-status").textContent = e.status === 409 ? `${e.message} (press R)` : e.message;
+    if (stillOpen()) $("message-status").textContent = e.status === 409 ? `${e.message} (refresh with ↻)` : e.message;
   }
 }
 
@@ -648,7 +754,7 @@ function closeMessage() {
 // Smart filing suggestions
 
 function selectionKey() {
-  return `${mail.folder}|${mail.validity}|${[...mail.selected].sort((a, b) => a - b).join(",")}`;
+  return [...mail.selected].sort().join("|");
 }
 
 let suggestTimer = null;
@@ -659,11 +765,15 @@ function requestSuggestions() {
   if (mail.suggest.key === key) return renderSuggestBar();
   $("suggest-bar").hidden = true;
   clearTimeout(suggestTimer);
+  const folder = selectionFolder();
+  // Suggestions are for messages from one folder at a time.
+  if (!folder) return;
   suggestTimer = setTimeout(async () => {
     if (selectionKey() !== key || !mail.selected.size) return;
     try {
-      const uids = [...mail.selected].slice(0, 50).join(",");
-      const reply = await api("GET", `/api/filing/suggest?folder=${encodeURIComponent(mail.folder)}&validity=${mail.validity}&uids=${uids}`);
+      const chosen = selectedMessages();
+      const uids = chosen.slice(0, 50).map((m) => m.uid).join(",");
+      const reply = await api("GET", `/api/filing/suggest?folder=${encodeURIComponent(folder)}&validity=${chosen[0].validity}&uids=${uids}`);
       mail.suggest = { key, trained: reply.trained, list: reply.suggestions };
       if (selectionKey() === key) renderSuggestBar();
     } catch {
@@ -710,14 +820,14 @@ function renderSuggestBar() {
 // Acting on mail
 
 function act(action) {
-  const uids = [...mail.selected];
-  if (!uids.length) return;
+  const keys = [...mail.selected];
+  if (!keys.length) return;
   const chosen = selectedMessages();
   switch (action) {
     case "read":
-      return setFlag(uids, "seen", chosen.some((m) => !m.seen));
+      return setFlag(keys, "seen", chosen.some((m) => !m.seen));
     case "flag":
-      return setFlag(uids, "flagged", !chosen.every((m) => m.flagged));
+      return setFlag(keys, "flagged", !chosen.every((m) => m.flagged));
     case "archive":
       if (canArchive()) removeSelected("archive");
       return;
@@ -736,23 +846,38 @@ function act(action) {
   }
 }
 
+/** Groups messages by the folder they're in: the server acts on one folder at a time. */
+function byFolder(messages) {
+  const groups = new Map();
+  for (const m of messages) {
+    const id = `${m.folder}\n${m.validity}`;
+    if (!groups.has(id)) groups.set(id, { folder: m.folder, validity: m.validity, messages: [] });
+    groups.get(id).messages.push(m);
+  }
+  return [...groups.values()];
+}
+
 /** Changes read or flagged right away, on screen first. */
-async function setFlag(uids, flag, value) {
-  const key = flag === "seen" ? "seen" : "flagged";
-  const changed = mail.messages.filter((m) => uids.includes(m.uid) && m[key] !== value);
+async function setFlag(keys, flag, value) {
+  const field = flag === "seen" ? "seen" : "flagged";
+  const changed = mail.messages.filter((m) => keys.includes(m.key) && m[field] !== value);
   if (!changed.length) return;
-  for (const m of changed) m[key] = value;
-  if (flag === "seen") adjustCounts(mail.folder, value ? -changed.length : changed.length, 0);
-  renderFolders();
-  renderMessages();
-  updateToolbar();
-  try {
-    await api("POST", "/api/messages/flags", { folder: mail.folder, validity: mail.validity, uids: changed.map((m) => m.uid), flag, value });
-  } catch (e) {
-    for (const m of changed) m[key] = !value;
-    if (flag === "seen") adjustCounts(mail.folder, value ? changed.length : -changed.length, 0);
+  const apply = (v) => {
+    for (const m of changed) {
+      m[field] = v;
+      if (flag === "seen") adjustCounts(m.folder, v ? -1 : 1, 0);
+    }
     renderFolders();
     renderMessages();
+    updateToolbar();
+  };
+  apply(value);
+  try {
+    for (const group of byFolder(changed)) {
+      await api("POST", "/api/messages/flags", { folder: group.folder, validity: group.validity, uids: group.messages.map((m) => m.uid), flag, value });
+    }
+  } catch (e) {
+    apply(!value);
     toast(e.message);
   }
 }
@@ -760,75 +885,102 @@ async function setFlag(uids, flag, value) {
 /**
  * Deletes, archives or moves the selected messages. They leave the list at once and the next
  * message opens; the server waits a few seconds before telling iCloud, so Undo can take it back.
+ * Search results can come from several folders: each folder gets its own request, and Undo takes
+ * them all back.
  */
 async function removeSelected(action, target = null) {
-  const folder = mail.folder;
-  const validity = mail.validity;
-  const items = mail.messages.map((m, index) => ({ m, index })).filter(({ m }) => mail.selected.has(m.uid));
+  const listId = mail.listId;
+  const items = mail.messages.map((m, index) => ({ m, index })).filter(({ m }) => mail.selected.has(m.key));
   if (!items.length) return;
   const wasOpen = mail.selected.size === 1;
   const lastIndex = items[items.length - 1].index;
-  const next = mail.messages.slice(lastIndex + 1).find((m) => !mail.selected.has(m.uid)) ||
-    mail.messages.slice(0, items[0].index).reverse().find((m) => !mail.selected.has(m.uid));
+  const next = mail.messages.slice(lastIndex + 1).find((m) => !mail.selected.has(m.key)) ||
+    mail.messages.slice(0, items[0].index).reverse().find((m) => !mail.selected.has(m.key));
 
-  mail.messages = mail.messages.filter((m) => !mail.selected.has(m.uid));
+  mail.messages = mail.messages.filter((m) => !mail.selected.has(m.key));
   mail.selected.clear();
   mail.anchor = null;
-  mail.cursor = next ? next.uid : null;
+  mail.cursor = next ? next.key : null;
   renderMessages();
-  if (next && wasOpen) selectOnly(next.uid);
+  if (next && wasOpen) selectOnly(next.key);
   else syncReader();
 
-  const unseen = items.filter(({ m }) => !m.seen).length;
-  try {
-    const removal = await api("POST", "/api/messages/remove", { folder, validity, uids: items.map(({ m }) => m.uid), action, target });
-    adjustCounts(folder, -unseen, -items.length);
-    if (removal.target) adjustCounts(removal.target, unseen, items.length);
-    renderFolders();
-    mail.lastRemoval = { id: removal.id, folder, validity, items, target: removal.target, unseen };
-    mail.undo = undo;
+  const done = [];
+  const failed = [];
+  let error = null;
+  for (const group of byFolder(items.map(({ m }) => m))) {
+    const groupItems = items.filter(({ m }) => m.folder === group.folder && m.validity === group.validity);
+    const unseen = groupItems.filter(({ m }) => !m.seen).length;
+    try {
+      const removal = await api("POST", "/api/messages/remove", {
+        folder: group.folder, validity: group.validity, uids: group.messages.map((m) => m.uid), action, target,
+      });
+      adjustCounts(group.folder, -unseen, -groupItems.length);
+      if (removal.target) adjustCounts(removal.target, unseen, groupItems.length);
+      done.push({ removal, items: groupItems, unseen });
+    } catch (e) {
+      failed.push(...groupItems);
+      error = e;
+    }
+  }
+  renderFolders();
+  // Put back what didn't happen on the server.
+  if (failed.length && mail.listId === listId) restore(failed);
+  if (!done.length) return toast(error ? error.message : "Nothing changed.");
+
+  mail.lastRemoval = { listId, parts: done };
+  mail.undo = undo;
+  for (const { removal } of done) {
     // Once the change has reached iCloud, show it in the folder it went to, if that's open by then.
     if (removal.target) {
       setTimeout(() => {
-        if (mail.folder === removal.target) softRefresh();
+        if (!mail.search && mail.folder === removal.target) softRefresh();
       }, removal.undoMs + 1500);
     }
-    const what = plural(items.length, "message");
-    const text = removal.target ? `Moved ${what} to ${removal.targetName}` : `Deleted ${what} for good`;
-    toast(text, removal.undoMs);
-  } catch (e) {
-    // Put them back: nothing happened on the server.
-    if (mail.folder === folder) restore(items);
-    toast(e.message);
   }
+  const count = done.reduce((n, d) => n + d.items.length, 0);
+  const what = plural(count, "message");
+  const first = done[0].removal;
+  const text = done.every((d) => !d.removal.target)
+    ? `Deleted ${what} for good`
+    : `Moved ${what} to ${first.targetName || "another folder"}`;
+  toast(error ? `${text}. ${error.message}` : text, first.undoMs);
 }
 
 function restore(items) {
   for (const { m, index } of [...items].sort((a, b) => a.index - b.index)) {
-    if (indexOf(m.uid) < 0) mail.messages.splice(Math.min(index, mail.messages.length), 0, m);
+    if (indexOf(m.key) < 0) mail.messages.splice(Math.min(index, mail.messages.length), 0, m);
   }
-  mail.selected = new Set(items.map(({ m }) => m.uid));
-  mail.anchor = mail.cursor = items[0].m.uid;
+  mail.selected = new Set(items.map(({ m }) => m.key));
+  mail.anchor = mail.cursor = items[0].m.key;
   renderMessages();
   syncReader();
 }
 
 async function undo() {
-  const removal = mail.lastRemoval;
-  if (!removal) return;
+  const last = mail.lastRemoval;
+  if (!last) return;
   mail.lastRemoval = null;
   hideToast();
-  try {
-    const result = await api("POST", "/api/messages/undo", { id: removal.id });
-    if (!result.undone) return toast("Too late to undo: it's already done.");
-    adjustCounts(removal.folder, removal.unseen, removal.items.length);
-    if (removal.target) adjustCounts(removal.target, -removal.unseen, -removal.items.length);
-    renderFolders();
-    if (mail.folder === removal.folder && mail.validity === removal.validity) restore(removal.items);
-    toast("Undone");
-  } catch (e) {
-    toast(e.message);
+  const back = [];
+  let late = false;
+  for (const { removal, items, unseen } of last.parts) {
+    try {
+      const result = await api("POST", "/api/messages/undo", { id: removal.id });
+      if (!result.undone) {
+        late = true;
+        continue;
+      }
+      adjustCounts(items[0].m.folder, unseen, items.length);
+      if (removal.target) adjustCounts(removal.target, -unseen, -items.length);
+      back.push(...items);
+    } catch (e) {
+      late = true;
+    }
   }
+  renderFolders();
+  if (back.length && mail.listId === last.listId) restore(back);
+  toast(late ? (back.length ? "Partly undone: some had already gone." : "Too late to undo: it's already done.") : "Undone");
 }
 
 // Toasts
@@ -950,7 +1102,8 @@ function openPicker(mode) {
 
 function renderPicker() {
   const query = $("picker-filter").value.trim().toLowerCase();
-  const folders = mail.folders.filter((f) => (picker.mode !== "move" || f.id !== mail.folder) && f.name.toLowerCase().includes(query));
+  const from = selectionFolder();
+  const folders = mail.folders.filter((f) => (picker.mode !== "move" || f.id !== from) && f.name.toLowerCase().includes(query));
   // Moving: smart filing's best guesses first, with why, as in the app.
   const suggested = picker.mode === "move" && !query
     ? currentSuggestions().map((s) => ({ ...mail.folders.find((f) => f.id === s.folder), reason: s.reason })).filter((f) => f.id)
@@ -1262,7 +1415,8 @@ function onKey(event) {
   const command = event.metaKey || event.ctrlKey;
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
   if (command) {
-    if (key === "a") selectAll();
+    if (key === "f" && !event.shiftKey) focusSearch();
+    else if (key === "a") selectAll();
     else if (key === "z" && !event.shiftKey) runUndo();
     else if (key === "m" && event.shiftKey) act("move");
     else if (key === "k") openPicker("goto");
@@ -1300,6 +1454,9 @@ function onKey(event) {
     case "s":
       act("flag");
       break;
+    case "/":
+      focusSearch();
+      break;
     case "n":
       openCompose("new");
       break;
@@ -1322,15 +1479,17 @@ function onKey(event) {
 async function softRefresh() {
   const token = mail.loadToken;
   try {
+    if (mail.search) return;
     const page = await api("GET", `/api/messages?folder=${encodeURIComponent(mail.folder)}`);
     if (token !== mail.loadToken) return;
-    const newest = new Set(page.messages.map((m) => m.uid));
-    const oldestShown = Math.min(...page.messages.map((m) => m.uid));
-    const older = mail.before ? mail.messages.filter((m) => !newest.has(m.uid) && m.uid < oldestShown) : [];
+    const fresh = page.messages.map((m) => tag(page.folder, page.validity, m));
+    const newest = new Set(fresh.map((m) => m.key));
+    const oldestShown = Math.min(...fresh.map((m) => m.uid));
+    const older = mail.before ? mail.messages.filter((m) => !newest.has(m.key) && m.uid < oldestShown) : [];
     mail.validity = page.validity;
-    mail.messages = [...page.messages, ...older];
+    mail.messages = [...fresh, ...older];
     if (!mail.before) mail.before = page.before;
-    const present = new Set(mail.messages.map((m) => m.uid));
+    const present = new Set(mail.messages.map((m) => m.key));
     const before = mail.selected.size;
     mail.selected = new Set([...mail.selected].filter((uid) => present.has(uid)));
     renderMessages();
@@ -1342,6 +1501,11 @@ async function softRefresh() {
 
 async function refresh() {
   await loadFolders().catch(() => {});
+  if (mail.search) {
+    const q = mail.search.q;
+    mail.listId = "";
+    return runSearch(q);
+  }
   if (mail.folder) await openFolder(mail.folder);
 }
 
@@ -1492,16 +1656,16 @@ document.addEventListener("DOMContentLoaded", () => {
     if (event.shiftKey) event.preventDefault();
   });
   list.addEventListener("contextmenu", (event) => {
-    const item = event.target.closest("li[data-uid]");
+    const item = event.target.closest("li[data-key]");
     if (!item) return;
     event.preventDefault();
-    const uid = Number(item.dataset.uid);
-    if (!mail.selected.has(uid)) selectOnly(uid);
+    const key = item.dataset.key;
+    if (!mail.selected.has(key)) selectOnly(key);
     openMenu(event.clientX, event.clientY);
   });
   list.addEventListener("focus", () => {
     if (mail.cursor === null && mail.messages.length) {
-      mail.cursor = mail.messages[0].uid;
+      mail.cursor = mail.messages[0].key;
       markSelected();
     }
   });
@@ -1532,6 +1696,31 @@ document.addEventListener("DOMContentLoaded", () => {
     const action = toastAction;
     hideToast();
     if (action) action.run();
+  });
+
+  // Search
+  $("search").addEventListener("input", () => scheduleSearch());
+  $("search").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      mail.listId = "";
+      scheduleSearch(true);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      const wasSearching = !!mail.search;
+      endSearch();
+      $("search").blur();
+      if (wasSearching) openFolder(mail.folder);
+      $("message-list").focus();
+    } else if (event.key === "ArrowDown" && mail.messages.length) {
+      event.preventDefault();
+      $("message-list").focus();
+      selectOnly(mail.messages[0].key);
+    }
+  });
+  $("search-all").addEventListener("change", () => {
+    mail.listId = "";
+    scheduleSearch(true);
   });
 
   // Writing
