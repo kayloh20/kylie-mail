@@ -18,6 +18,14 @@ APP=/opt/kylie-mail-web
 
 say() { printf '\n\033[1;35m==> %s\033[0m\n' "$*"; }
 
+# Docker's package list and the security settings below are for Debian 13 only.
+. /etc/os-release
+if [[ "${ID:-}" != debian || "${VERSION_ID:-}" != 13 ]]; then
+  echo "This script is for Debian 13, but this server runs ${PRETTY_NAME:-something else}." >&2
+  echo "Reinstall it with Debian 13 (in Vultr: Settings, Change OS), then run this again. Nothing has been changed." >&2
+  exit 1
+fi
+
 # Turning off password logins with no key in place would lock you out, so check first.
 say "Checking for an SSH key"
 if ! grep -qE '^(ssh-(ed25519|rsa)|ecdsa-sha2-|sk-)' /root/.ssh/authorized_keys 2>/dev/null; then
