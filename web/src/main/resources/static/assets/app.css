@@ -227,6 +227,31 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; }
 .toolbar button { padding: 6px 12px; font-size: 0.9rem; background: transparent; color: var(--accent); }
 .toolbar button:hover { background: var(--hover); }
 .toolbar .back { border: 0; }
+.suggest-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+.suggest-bar .spark { color: var(--accent); }
+.suggest-bar button.chip {
+  padding: 4px 12px;
+  font-size: 0.9rem;
+  background: var(--selected);
+  color: var(--fg);
+  border-color: transparent;
+}
+.suggest-bar button.chip::before { content: "📁 "; }
+.checks li { justify-content: flex-start; }
+.checks label { display: flex; align-items: center; gap: 10px; font-weight: 500; flex: 1; }
+.checks small { margin-left: auto; }
+.picker-list li.section { font-size: 0.8rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; padding: 10px 12px 4px; }
+.picker-list li small { display: block; color: var(--muted); font-size: 0.82rem; }
+.menu .spark { color: var(--accent); }
 .big { font-size: 1.3rem; font-weight: 700; color: var(--fg); }
 
 .menu {
@@ -294,6 +319,7 @@ h3 { margin: 0 0 8px; font-size: 1.05rem; }
   #app.reading #reader { display: flex; }
   .back { display: inline-block; }
   .toolbar { padding: 8px 16px; }
+  .suggest-bar { padding: 8px 16px; }
   .message-head, .images-bar, .attachments { padding-left: 16px; padding-right: 16px; }
 }
 @media print {

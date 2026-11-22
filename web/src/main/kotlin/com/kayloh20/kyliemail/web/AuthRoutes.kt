@@ -47,6 +47,17 @@ class Services(
     val mailServer: ServerConfig = ServerConfig.ICLOUD,
     val undoMs: Long = MailClient.UNDO_MS,
 ) {
+    private val filingStore by lazy { FilingStore(java.nio.file.Path.of(config.dataDir).resolve("filing.sealed")) }
+
+    /** The session's smart filing, opened on first use; it also picks up mail filed since last time. */
+    fun filing(session: Session): Filing = synchronized(session) {
+        session.filing ?: run {
+            val account = vault.account() ?: throw ApiError(HttpStatusCode.Conflict, "Kylie Mail isn't set up yet.")
+            Filing(filingStore, { session.accountKey }, Filing.ownAddresses(account.email, account.username), now)
+                .also { session.filing = it }
+        }
+    }.also { filing -> runCatching { filing.keepLearningOnce(mail(session)) } }
+
     /** The session's connection to iCloud, made on first use. */
     fun mail(session: Session): MailClient = synchronized(session) {
         session.mail ?: run {

@@ -117,6 +117,7 @@
       <button type="button" data-act="read" title="Mark as read or unread (U)">Mark as unread</button>
       <button type="button" data-act="flag" title="Flag (S)">Flag</button>
     </div>
+    <div id="suggest-bar" class="suggest-bar" hidden></div>
     <div id="many" class="empty" hidden>
       <p id="many-count" class="big"></p>
       <p class="note">Right-click for more, or press <kbd>Delete</kbd>, <kbd>E</kbd> to archive, <kbd>M</kbd> to move.</p>
@@ -171,6 +172,18 @@
       <button type="submit" class="secondary">Add a passkey</button>
     </form>
     <p class="error" role="alert"></p>
+  </section>
+
+  <section class="card" id="filing-card">
+    <h3>Smart filing</h3>
+    <p class="note">Suggests folders by learning how you file: who mail is from, who it went to, and its subject, never what it says. It learns from the folders you check here and from every move you make. What it learns is sealed with your passkey, like your password.</p>
+    <p id="filing-summary"></p>
+    <ul id="filing-folders" class="list checks"></ul>
+    <div class="row">
+      <button type="button" id="train" class="secondary">Learn from checked folders</button>
+      <button type="button" id="stop-training" class="link" hidden>Stop</button>
+    </div>
+    <p id="training-status" class="note" role="status"></p>
   </section>
 
   <section class="card">

@@ -6,6 +6,9 @@ import java.util.concurrent.ConcurrentHashMap
 class Session(val accountKey: ByteArray, val createdAt: Long, var lastSeenAt: Long, val viaRecoveryCode: Boolean) {
     /** This browser's connection to iCloud, opened on first use and closed when the session ends. */
     @Volatile var mail: MailClient? = null
+
+    /** Smart filing's memory, opened on first use and forgotten when the session ends. */
+    @Volatile var filing: Filing? = null
 }
 
 /**
@@ -48,6 +51,9 @@ class Sessions(private val now: () -> Long = System::currentTimeMillis) {
     /** Removes a session by its hashed key and wipes its copy of the account key. */
     private fun drop(k: String) {
         val session = sessions.remove(k) ?: return
+        // Filing stops first: it must never save with the key wiped below.
+        session.filing?.let { runCatching { it.close() } }
+        session.filing = null
         session.mail?.let { runCatching { it.shutdown() } }
         session.mail = null
         session.accountKey.fill(0)

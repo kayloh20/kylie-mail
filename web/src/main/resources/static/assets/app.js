@@ -219,6 +219,46 @@ async function loadSettings() {
   return me;
 }
 
+// Settings: smart filing
+
+let trainingPoll = null;
+
+async function loadFiling() {
+  const filing = await api("GET", "/api/filing");
+  const trainedFolders = filing.folders.filter((f) => f.trained);
+  $("filing-summary").textContent = filing.examples
+    ? `Learned from ${plural(filing.examples, "email")}${trainedFolders.length ? ` in ${plural(trainedFolders.length, "folder")}` : ""}, plus every move you make.`
+    : "Not trained yet. Check the folders you file mail into, then start.";
+  const running = filing.status.state === "running";
+  if (!running || !$("filing-folders").children.length) {
+    $("filing-folders").replaceChildren(
+      ...filing.folders.map((f) => {
+        const box = el("input", { type: "checkbox", value: f.id, checked: f.trained });
+        return el("li", {}, el("label", {}, box, el("span", { textContent: f.name }), el("small", { textContent: f.examples ? plural(f.examples, "email") : "" })));
+      }),
+    );
+  }
+  for (const box of $("filing-folders").querySelectorAll("input")) box.disabled = running;
+  $("train").disabled = running;
+  $("stop-training").hidden = !running;
+  const s = filing.status;
+  $("training-status").textContent =
+    s.state === "running" ? (s.folder ? `Learning from ${s.folder} (${s.index} of ${s.total}), ${plural(s.learned, "email")} so far…` : "Starting…")
+    : s.state === "finished" ? `Done: learned from ${plural(s.learned, "new email")}.`
+    : s.state === "failed" ? s.message || "Training stopped."
+    : "";
+  clearTimeout(trainingPoll);
+  if (running && $("settings").open) trainingPoll = setTimeout(() => loadFiling().catch(() => {}), 1000);
+  if (s.state === "finished") mail.suggest.key = ""; // new lessons: ask again
+  return filing;
+}
+
+async function openSettings(scrollTo) {
+  await Promise.all([loadSettings().catch(() => {}), loadFiling().catch(() => {})]);
+  if (!$("settings").open) $("settings").showModal();
+  if (scrollTo) $(scrollTo).scrollIntoView({ block: "start" });
+}
+
 // The mailbox
 
 const mail = {
@@ -233,6 +273,7 @@ const mail = {
   detail: null, // the open message
   loadToken: 0,
   lastRemoval: null, // what Undo takes back
+  suggest: { key: "", trained: true, list: [] }, // smart filing's ideas for the selection
 };
 
 const shortDate = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
@@ -484,6 +525,7 @@ function syncReader() {
     return;
   }
   updateToolbar();
+  requestSuggestions();
   if (count > 1) {
     mail.detail = null;
     $("reader-empty").hidden = true;
@@ -570,12 +612,75 @@ function showMessage(detail) {
 
 function closeMessage() {
   mail.detail = null;
+  $("suggest-bar").hidden = true;
   $("app").classList.remove("reading");
   $("message").hidden = true;
   $("many").hidden = true;
   $("toolbar").hidden = true;
   $("reader-empty").hidden = false;
   $("message-body").removeAttribute("src");
+}
+
+// Smart filing suggestions
+
+function selectionKey() {
+  return `${mail.folder}|${mail.validity}|${[...mail.selected].sort((a, b) => a - b).join(",")}`;
+}
+
+let suggestTimer = null;
+
+/** Asks where the selected mail might go, a moment after the selection settles. */
+function requestSuggestions() {
+  const key = selectionKey();
+  if (mail.suggest.key === key) return renderSuggestBar();
+  $("suggest-bar").hidden = true;
+  clearTimeout(suggestTimer);
+  suggestTimer = setTimeout(async () => {
+    if (selectionKey() !== key || !mail.selected.size) return;
+    try {
+      const uids = [...mail.selected].slice(0, 50).join(",");
+      const reply = await api("GET", `/api/filing/suggest?folder=${encodeURIComponent(mail.folder)}&validity=${mail.validity}&uids=${uids}`);
+      mail.suggest = { key, trained: reply.trained, list: reply.suggestions };
+      if (selectionKey() === key) renderSuggestBar();
+    } catch {
+      // Suggestions are a nicety; the mail still works without them.
+    }
+  }, 150);
+}
+
+function currentSuggestions() {
+  return mail.suggest.key === selectionKey() ? mail.suggest.list : [];
+}
+
+function renderSuggestBar() {
+  const bar = $("suggest-bar");
+  if (mail.suggest.key !== selectionKey() || !mail.selected.size) {
+    bar.hidden = true;
+    return;
+  }
+  if (!mail.suggest.trained) {
+    const train = el("button", { type: "button", className: "link", textContent: "Train smart filing" });
+    train.onclick = () => openSettings("filing-card");
+    bar.replaceChildren(el("span", { className: "spark", textContent: "✨" }), el("span", { textContent: "Smart filing can suggest folders once it learns how you file." }), train);
+    bar.hidden = false;
+    return;
+  }
+  const confident = mail.suggest.list.filter((s) => s.confident).slice(0, 2);
+  if (!confident.length) {
+    bar.hidden = true;
+    return;
+  }
+  bar.replaceChildren(
+    el("span", { className: "spark", textContent: "✨" }),
+    el("span", { textContent: "File to" }),
+    ...confident.map((s) => {
+      const chip = el("button", { type: "button", className: "chip", textContent: s.name, title: s.reason });
+      chip.setAttribute("aria-label", `File to ${s.name}: ${s.reason}`);
+      chip.onclick = () => removeSelected("move", s.folder);
+      return chip;
+    }),
+  );
+  bar.hidden = false;
 }
 
 // Acting on mail
@@ -729,8 +834,20 @@ function openMenu(x, y) {
     };
     return button;
   };
+  const best = currentSuggestions().find((s) => s.confident);
+  let fileTo = null;
+  if (best) {
+    fileTo = el("button", { type: "button", title: best.reason }, el("span", {}, el("span", { className: "spark", textContent: "✨ " }), document.createTextNode(`File to ${best.name}`)));
+    fileTo.setAttribute("role", "menuitem");
+    fileTo.onclick = () => {
+      closeMenu();
+      removeSelected("move", best.folder);
+    };
+  }
   const menu = $("menu");
   menu.replaceChildren(
+    fileTo,
+    fileTo ? el("hr") : null,
     item(anyUnread ? "Mark as read" : "Mark as unread", "U", "read"),
     item(allFlagged ? "Unflag" : "Flag", "S", "flag"),
     el("hr"),
@@ -771,6 +888,7 @@ function openPicker(mode) {
   picker.mode = mode;
   $("picker-title").textContent = mode === "move" ? `Move ${plural(mail.selected.size, "message")} to…` : "Go to folder";
   $("picker-filter").value = "";
+  picker.highlight = 0;
   renderPicker();
   $("picker").showModal();
   $("picker-filter").focus();
@@ -778,19 +896,31 @@ function openPicker(mode) {
 
 function renderPicker() {
   const query = $("picker-filter").value.trim().toLowerCase();
-  picker.options = mail.folders.filter((f) => (picker.mode !== "move" || f.id !== mail.folder) && f.name.toLowerCase().includes(query));
-  picker.highlight = Math.min(picker.highlight, Math.max(0, picker.options.length - 1));
-  if (query) picker.highlight = 0;
+  const folders = mail.folders.filter((f) => (picker.mode !== "move" || f.id !== mail.folder) && f.name.toLowerCase().includes(query));
+  // Moving: smart filing's best guesses first, with why, as in the app.
+  const suggested = picker.mode === "move" && !query
+    ? currentSuggestions().map((s) => ({ ...mail.folders.find((f) => f.id === s.folder), reason: s.reason })).filter((f) => f.id)
+    : [];
+  picker.options = [...suggested, ...folders];
+  picker.highlight = query ? 0 : Math.min(picker.highlight, Math.max(0, picker.options.length - 1));
+  const row = (f, i) => {
+    const li = el("li", {}, el("span", { textContent: f.name }), f.reason ? el("small", { textContent: f.reason }) : null);
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", String(i === picker.highlight));
+    li.onclick = () => pick(f);
+    return li;
+  };
+  const section = (text) => {
+    const li = el("li", { className: "section", textContent: text });
+    li.setAttribute("role", "presentation");
+    return li;
+  };
+  const rows = picker.options.map(row);
   $("picker-list").replaceChildren(
-    ...picker.options.map((f, i) => {
-      const li = el("li", { textContent: f.name });
-      li.setAttribute("role", "option");
-      li.setAttribute("aria-selected", String(i === picker.highlight));
-      li.onclick = () => pick(f);
-      return li;
-    }),
+    ...(suggested.length ? [section("Suggested"), ...rows.slice(0, suggested.length), section("All folders")] : []),
+    ...rows.slice(suggested.length),
   );
-  const current = $("picker-list").children[picker.highlight];
+  const current = rows[picker.highlight];
   if (current) current.scrollIntoView({ block: "nearest" });
 }
 
@@ -968,9 +1098,21 @@ document.addEventListener("DOMContentLoaded", () => {
     show("signin");
   });
 
-  $("open-settings").addEventListener("click", async () => {
-    await loadSettings().catch(() => {});
-    $("settings").showModal();
+  $("open-settings").addEventListener("click", () => openSettings());
+  $("train").addEventListener("click", (event) => {
+    const folders = [...$("filing-folders").querySelectorAll("input:checked")].map((box) => box.value);
+    busy(event.target, async () => {
+      try {
+        await api("POST", "/api/filing/train", { folders });
+        await loadFiling();
+      } catch (e) {
+        $("training-status").textContent = e.message;
+      }
+    });
+  });
+  $("stop-training").addEventListener("click", async () => {
+    await api("POST", "/api/filing/stop").catch(() => {});
+    await loadFiling().catch(() => {});
   });
   $("close-settings").addEventListener("click", () => $("settings").close());
 
@@ -1001,7 +1143,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const made = await api("POST", "/api/recovery-codes");
         showCodes(made.recoveryCodes, () => {
           show("app");
-          loadSettings().then(() => $("settings").showModal()).catch(() => {});
+          openSettings().catch(() => {});
         });
       } catch (e) {
         setError(card, explain(e));

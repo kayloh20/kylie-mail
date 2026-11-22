@@ -21,6 +21,9 @@ import javax.mail.Flags
 const val EMAIL_BODY_PATH = "/api/message/body"
 const val ATTACHMENT_PATH = "/api/message/attachment"
 
+/** Folders mail can be filed to, as in the app. */
+val FILING_TARGETS = setOf(FolderRole.CUSTOM, FolderRole.ARCHIVE)
+
 @Serializable data class FlagBody(val folder: String, val validity: Long, val uids: List<Long>, val flag: String, val value: Boolean)
 @Serializable data class RemoveBody(
     val folder: String,
@@ -32,6 +35,10 @@ const val ATTACHMENT_PATH = "/api/message/attachment"
     val target: String? = null,
 )
 @Serializable data class UndoBody(val id: String)
+@Serializable data class TrainBody(val folders: List<String>)
+@Serializable data class FilingFolder(val id: String, val name: String, val trained: Boolean, val examples: Int)
+@Serializable data class FilingReply(val examples: Int, val folders: List<FilingFolder>, val status: TrainingStatus)
+@Serializable data class SuggestReply(val trained: Boolean, val suggestions: List<FilingSuggestion>)
 @Serializable data class UndoReply(val undone: Boolean)
 @Serializable data class TrustBody(val address: String)
 @Serializable data class Done(val ok: Boolean = true)
@@ -123,12 +130,61 @@ fun Route.mailRoutes(services: Services) = route("/api") {
             "move" -> body.target?.takeIf { it.isNotEmpty() } ?: throw ApiError(HttpStatusCode.BadRequest, "Choose a folder.")
             else -> throw ApiError(HttpStatusCode.BadRequest, "Unknown action.")
         }
-        call.respond(mail.remove(body.folder, body.validity, body.uids, target))
+        val (removal, moved) = mail.remove(body.folder, body.validity, body.uids, target)
+        // Filing a message teaches smart filing where this kind of mail goes, as in the app.
+        if (target != null && body.action != "delete" && mail.roleOf(target) in FILING_TARGETS) {
+            runCatching { services.filing(session).recordMoves(removal.id, target, moved) }
+        }
+        call.respond(removal)
     }
 
     post("/messages/undo") {
         val session = call.requireSession(services)
-        call.respond(UndoReply(services.mail(session).undo(call.receive<UndoBody>().id)))
+        val id = call.receive<UndoBody>().id
+        val undone = services.mail(session).undo(id)
+        if (undone) session.filing?.forgetMoves(id)
+        call.respond(UndoReply(undone))
+    }
+
+    // Smart filing.
+
+    get("/filing") {
+        val session = call.requireSession(services)
+        val mail = services.mail(session)
+        val filing = services.filing(session)
+        val data = filing.snapshot()
+        val counts = data.examples.groupingBy { it.folder }.eachCount()
+        val trained = data.trained.map { it.fullName }.toSet()
+        val folders = mail.folders().filter { FolderRole.valueOf(it.role.uppercase()) in FILING_TARGETS }
+            .map { FilingFolder(it.id, it.name, it.id in trained, counts[it.id] ?: 0) }
+        call.respond(FilingReply(data.examples.size, folders, filing.status))
+    }
+
+    post("/filing/train") {
+        val session = call.requireSession(services)
+        val mail = services.mail(session)
+        val wanted = call.receive<TrainBody>().folders.toSet()
+        val folders = mail.knownFolders().filter { it.id in wanted && FolderRole.valueOf(it.role.uppercase()) in FILING_TARGETS }
+        services.filing(session).train(folders.map { it.id to it.name }, mail)
+        call.respond(Done())
+    }
+
+    post("/filing/stop") {
+        val session = call.requireSession(services)
+        services.filing(session).stopTraining()
+        call.respond(Done())
+    }
+
+    get("/filing/suggest") {
+        val session = call.requireSession(services)
+        val folder = call.param("folder")
+        val uids = call.param("uids").split(',').mapNotNull { it.trim().toLongOrNull() }.take(50)
+        if (uids.isEmpty()) throw ApiError(HttpStatusCode.BadRequest, "No messages chosen.")
+        val mail = services.mail(session)
+        val filing = services.filing(session)
+        val targets = mail.knownFolders().filter { FolderRole.valueOf(it.role.uppercase()) in FILING_TARGETS }.associate { it.id to it.name }
+        val features = mail.features(folder, call.longParam("validity"), uids)
+        call.respond(SuggestReply(filing.snapshot().examples.isNotEmpty(), filing.suggest(features, folder, targets)))
     }
 
     post("/image-senders") {

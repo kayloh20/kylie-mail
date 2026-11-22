@@ -37,6 +37,23 @@ class TestMail(imapPort: Int = 0, smtpPort: Int = 0) : AutoCloseable {
 
     fun deliver(message: MimeMessage) = user.deliver(message)
 
+    /** Puts [messages] straight into [folder], as if filed there earlier. */
+    fun file(folder: String, vararg messages: MimeMessage) {
+        val store = Session.getInstance(Properties()).getStore("imap")
+        store.connect("127.0.0.1", greenMail.imap.port, email, password)
+        try {
+            store.getFolder(folder).appendMessages(arrayOf(*messages))
+        } finally {
+            store.close()
+        }
+    }
+
+    /** A past order from the shop, like the ones already filed in Receipts. */
+    fun pastOrder(n: Int) = message("Shop <orders@shop.example>", "Order #$n confirmed", Date(System.currentTimeMillis() - (100 + n) * 86_400_000L)) {
+        setText("Thanks for order $n.")
+        setFlag(Flags.Flag.SEEN, true)
+    }
+
     fun message(from: String, subject: String, sent: Date = Date(), build: MimeMessage.() -> Unit): MimeMessage =
         MimeMessage(session).apply {
             setFrom(InternetAddress(from))
@@ -53,6 +70,7 @@ class TestMail(imapPort: Int = 0, smtpPort: Int = 0) : AutoCloseable {
         createFolder("Archive")
         createFolder("Deleted Messages")
         createFolder("Receipts")
+        file("Receipts", *Array(5) { pastOrder(it + 1) })
         val day = 24 * 60 * 60 * 1000L
         val start = System.currentTimeMillis() - 10 * day
         deliver(message("Mom <mom@example.org>", "Dinner Sunday?", Date(start)) {

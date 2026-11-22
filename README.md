@@ -21,7 +21,7 @@ suggested filing.
 ## On the web
 
 The web version lives in [`web/`](web/README.md) and runs on its own server. Passkey sign-in,
-reading mail, and deleting, moving and flagging it work; smart filing comes next.
+reading, deleting, moving, flagging and smart filing work; writing comes next.
 
 ## Signing in
 

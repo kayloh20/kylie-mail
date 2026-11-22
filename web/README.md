@@ -6,12 +6,11 @@ and smart filing.
 
 ## Status
 
-Signing in, reading and acting on mail work: passkeys and recovery codes, folders with unread
-counts, the message list, messages with their attachments, and deleting, archiving, moving and
-flagging with undo. Coming next, in this order:
+Signing in, reading, acting on mail and smart filing work: passkeys and recovery codes, folders
+with unread counts, the message list, messages with their attachments, deleting, archiving, moving
+and flagging with undo, and folder suggestions. Coming next:
 
-1. **Smart filing**, using the app's own filing code.
-2. **Writing.** Replies, forwards and new mail, in plain text only, like the app.
+1. **Writing.** Replies, forwards and new mail, in plain text only, like the app.
 
 ## Signing in
 
@@ -39,7 +38,8 @@ flagging with undo. Coming next, in this order:
 - **Attachments always download**, never open on the site, so an HTML or SVG attachment can't run
   inside Kylie Mail.
 - **Mail comes live from iCloud** over the session's own connection, which closes when the
-  session ends. Nothing about your mail is written to the server's disk.
+  session ends. The only things about your mail kept on the server's disk are sealed with your
+  account key: smart filing's memory and the senders you load images from.
 
 ## Acting on mail
 
@@ -62,6 +62,22 @@ Deleting moves to Trash; deleting from Trash deletes for good. As in the app, de
 moves wait 6 seconds before reaching iCloud, so Undo is instant. The wait happens on the server, so
 closing the tab doesn't cancel them, and signing out sends any that are still waiting. Marking
 read or flagged happens right away.
+
+## Smart filing
+
+The app's own filing model, suggesting where mail goes from who sent it, which address it went to,
+the sender's company and words in the subject. No AI, and never the message itself.
+
+- **Train it** in Settings by checking the folders you file mail into. It reads the sender,
+  recipients and subject of up to 1,000 recent emails in each, and picks up mail filed there since
+  each time you sign in, including from your other devices.
+- **It learns from you**: every Move and Archive is a lesson, and an undone one isn't. Deleting
+  isn't filing.
+- **Suggestions** appear as one-click *File to* buttons above a message when it's confident (hover
+  for why), as *File to …* at the top of the right-click menu, and as a *Suggested* section in the
+  Move picker.
+- **What it learns is sealed** with your account key in `filing.sealed`, like the password, and is
+  only opened in memory while you're signed in.
 
 ## How your mail is protected
 

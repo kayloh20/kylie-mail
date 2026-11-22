@@ -205,15 +205,15 @@ class MailClient(
      * changes on iCloud for [UNDO_MS], so [undo] can still take it back; until then the folder lists
      * and counts already look as they will afterwards.
      */
-    suspend fun remove(folderId: String, validity: Long, uids: List<Long>, target: String?): Removal {
+    suspend fun remove(folderId: String, validity: Long, uids: List<Long>, target: String?): Pair<Removal, List<MessageFeatures>> {
         if (uids.isEmpty()) throw ApiError(HttpStatusCode.BadRequest, "No messages chosen.")
         if (target == folderId) throw ApiError(HttpStatusCode.BadRequest, "They're already in that folder.")
-        val unseen = run { store ->
+        val (unseen, features) = run { store ->
             if (target != null && !store.getFolder(target).exists()) throw ApiError(HttpStatusCode.NotFound, "That folder doesn't exist any more.")
             val f = open(store, folderId, validity)
-            val messages = f.getMessagesByUID(uids.toLongArray()).filterNotNull()
+            val messages = f.getMessagesByUID(uids.toLongArray()).filterNotNull().toTypedArray()
             if (messages.isEmpty()) throw ApiError(HttpStatusCode.NotFound, "Those messages are gone.")
-            messages.count { !it.isSet(Flags.Flag.SEEN) }
+            messages.count { !it.isSet(Flags.Flag.SEEN) } to readFeatures(f, messages)
         }
         val removal = PendingRemoval(Crypto.b64url(Crypto.randomBytes(12)), folderId, validity, uids.toSet(), target, unseen)
         synchronized(pending) {
@@ -224,7 +224,64 @@ class MailClient(
             }
         }
         val name = target?.let { t -> knownFolders.find { it.id == t }?.name ?: t.substringAfterLast('/') }
-        return Removal(removal.id, uids.size, target, name, undoMs)
+        return Removal(removal.id, uids.size, target, name, undoMs) to features
+    }
+
+    /** Sender, recipients and subject of [uids], for smart filing. */
+    suspend fun features(folderId: String, validity: Long, uids: List<Long>): List<MessageFeatures> = run { store ->
+        val f = open(store, folderId, validity)
+        readFeatures(f, f.getMessagesByUID(uids.toLongArray()).filterNotNull().toTypedArray())
+    }
+
+    /**
+     * Up to [limit] of a folder's newest messages for training, or only those newer than [afterUid]
+     * when the folder hasn't changed since [knownValidity]. Read in chunks, so the connection is
+     * never held for long. Null if the folder is gone.
+     */
+    suspend fun collectExamples(folderName: String, afterUid: Long, knownValidity: Long, limit: Int): FolderSample? {
+        val (validity, count) = run { store ->
+            val f = store.getFolder(folderName) as IMAPFolder
+            if (!f.exists()) return@run null
+            val opened = open(store, folderName)
+            opened.uidValidity to opened.messageCount
+        } ?: return null
+        val incremental = afterUid > 0 && validity == knownValidity
+        val collected = mutableListOf<MessageFeatures>()
+        if (incremental) {
+            collected += run { store ->
+                val f = open(store, folderName, validity)
+                readFeatures(f, f.getMessagesByUID(afterUid + 1, UIDFolder.LASTUID)).filter { it.uid > afterUid }
+            }
+        } else if (count > 0) {
+            var end = count
+            val start = maxOf(1, count - limit + 1)
+            while (end >= start) {
+                val from = maxOf(start, end - CHUNK + 1)
+                collected += run { store ->
+                    val f = open(store, folderName, validity)
+                    readFeatures(f, f.getMessages(from, end))
+                }
+                end = from - 1
+            }
+        }
+        val highest = maxOf(if (incremental) afterUid else 0L, collected.maxOfOrNull { it.uid } ?: 0L)
+        return FolderSample(validity, highest, collected)
+    }
+
+    private fun readFeatures(f: IMAPFolder, messages: Array<Message>): List<MessageFeatures> {
+        f.fetch(messages, FetchProfile().apply {
+            add(FetchProfile.Item.ENVELOPE)
+            add(UIDFolder.FetchProfileItem.UID)
+        })
+        return messages.mapNotNull { m ->
+            runCatching {
+                val from = m.from?.firstOrNull() as? InternetAddress
+                val recipients = listOf(Message.RecipientType.TO, Message.RecipientType.CC)
+                    .flatMap { m.getRecipients(it)?.toList().orEmpty() }
+                    .mapNotNull { (it as? InternetAddress)?.address?.lowercase() }
+                MessageFeatures(f.getUID(m), from?.address.orEmpty().lowercase(), from?.personal.orEmpty(), recipients, m.subject.orEmpty())
+            }.getOrNull()
+        }
     }
 
     /** Takes back a removal that hasn't been sent yet. False once it has. */
@@ -233,6 +290,9 @@ class MailClient(
         removal.job?.cancel()
         true
     }
+
+    /** The folders as last listed, without asking iCloud again unless there's no list yet. */
+    suspend fun knownFolders(): List<FolderInfo> = knownFolders.ifEmpty { folders() }
 
     /** The folder Delete and Archive move to, from the folders seen so far. */
     suspend fun folderWithRole(role: FolderRole): FolderInfo? {
@@ -407,6 +467,9 @@ class MailClient(
         const val MAX_DOWNLOAD = 60L * 1024 * 1024
         /** How long a removal waits before going to iCloud, as in the app. */
         const val UNDO_MS = 6_000L
+
+        /** How many messages one training read fetches before letting other requests through. */
+        private const val CHUNK = 250
     }
 }
 

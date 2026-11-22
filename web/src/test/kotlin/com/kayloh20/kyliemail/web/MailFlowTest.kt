@@ -30,12 +30,14 @@ class MailFlowTest {
     @get:Rule val folder = TemporaryFolder()
 
     private val mail = TestMail().apply { seed() }
-    private val config = WebConfig(origin = "https://mail.example.org", dataDir = "unused")
+    // Built once the temporary folder exists, so everything the server saves lands there.
+    private val config by lazy { WebConfig(origin = "https://mail.example.org", dataDir = folder.root.path) }
     private val json = Json { ignoreUnknownKeys = true }
 
     @After fun stop() = mail.close()
 
     private lateinit var services: Services
+    private lateinit var accountKey: ByteArray
 
     private fun server(undoMs: Long = 400, block: suspend Browser.() -> Unit) = testApplication {
         val dataDir = folder.root.toPath()
@@ -55,6 +57,7 @@ class MailFlowTest {
             mail.email, mail.email, mail.password, "handle",
             NewPasskey("pk", "Laptop", "unused", 0, false, false, Crypto.b64url(Crypto.randomBytes(32))), prf,
         )
+        accountKey = created.accountKey.copyOf()
         val token = services.sessions.create(created.accountKey)
         application { webModule(config, services) }
         Browser(this, token).block()
@@ -245,17 +248,17 @@ class MailFlowTest {
         val inbox = inbox()
         val mom = inbox.messages.first { it.subject == "Dinner Sunday?" }
         assertEquals("Receipts", remove(inbox, listOf(mom.uid), "move", "Receipts").read(Removal.serializer()).targetName)
-        eventually("it reaches Receipts") { subjects("Receipts") == listOf("Dinner Sunday?") }
+        eventually("it reaches Receipts") { "Dinner Sunday?" in subjects("Receipts") }
 
         val receipts = page("Receipts")
-        remove(receipts, listOf(receipts.messages[0].uid), "delete").read(Removal.serializer())
+        remove(receipts, listOf(receipts.messages.first { it.subject == "Dinner Sunday?" }.uid), "delete").read(Removal.serializer())
         eventually("it reaches the Trash") { subjects("Deleted Messages") == listOf("Dinner Sunday?") }
 
         // Deleting from the Trash deletes for good.
         val trash = page("Deleted Messages")
         assertEquals(null, remove(trash, listOf(trash.messages[0].uid), "delete").read(Removal.serializer()).target)
         eventually("it's gone for good") { subjects("Deleted Messages").isEmpty() }
-        assertEquals(listOf(3, 0, 0, 0), folders().map { it.total })
+        assertEquals(listOf(3, 0, 0, 5), folders().map { it.total })
     }
 
     @Test
@@ -302,5 +305,84 @@ class MailFlowTest {
         val archive = page("Archive")
         assertEquals(HttpStatusCode.BadRequest, remove(archive, listOf(1), "archive").status, "already archived")
         assertEquals(4, inbox().messages.size)
+    }
+
+    // Smart filing
+
+    private suspend fun Browser.filing() = get("/api/filing").read(FilingReply.serializer())
+
+    private suspend fun Browser.suggest(page: MessagePage, uids: List<Long>) =
+        get("/api/filing/suggest?folder=${page.folder.encodeURLParameter()}&validity=${page.validity}&uids=${uids.joinToString(",")}")
+            .read(SuggestReply.serializer())
+
+    private suspend fun Browser.train(vararg folders: String) {
+        post("/api/filing/train", """{"folders":[${folders.joinToString(",") { "\"$it\"" }}]}""").read(Done.serializer())
+        eventually("training finishes") { filing().status.state == "finished" }
+    }
+
+    @Test
+    fun smartFilingLearnsFromTrainedFoldersAndSuggests() = server {
+        val inbox = inbox()
+        val order = inbox.messages.first { it.subject == "Your order has shipped" }
+
+        val untrained = filing()
+        assertEquals(0, untrained.examples)
+        assertEquals(listOf("Archive" to false, "Receipts" to false), untrained.folders.map { it.name to it.trained })
+        assertEquals(SuggestReply(trained = false, suggestions = emptyList()), suggest(inbox, listOf(order.uid)))
+
+        train("Receipts")
+        val trained = filing()
+        assertEquals(5, trained.examples)
+        assertEquals(FilingFolder("Receipts", "Receipts", trained = true, examples = 5), trained.folders.last())
+
+        val suggestion = suggest(inbox, listOf(order.uid)).suggestions.first()
+        assertEquals("Receipts", suggestion.folder)
+        assertTrue(suggestion.confident, suggestion.toString())
+        assertEquals("You've filed 5 emails from Shop here", suggestion.reason)
+
+        // Mom's email isn't like those.
+        val mom = inbox.messages.first { it.subject == "Dinner Sunday?" }
+        assertTrue(suggest(inbox, listOf(mom.uid)).suggestions.none { it.confident })
+
+        // What it learned is sealed on disk, like the password.
+        val sealed = folder.root.resolve("filing.sealed").readBytes()
+        assertFalse("shop.example" in String(sealed, Charsets.ISO_8859_1))
+        assertEquals(5, FilingStore(folder.root.toPath().resolve("filing.sealed")).load(accountKey).examples.size)
+    }
+
+    @Test
+    fun movesAreLessonsUnlessUndone() = server(undoMs = 2_000) {
+        train("Receipts")
+        val inbox = inbox()
+        val mom = inbox.messages.first { it.subject == "Dinner Sunday?" }
+        val removal = remove(inbox, listOf(mom.uid), "move", "Receipts").read(Removal.serializer())
+        assertEquals(6, filing().examples)
+        post("/api/messages/undo", """{"id":"${removal.id}"}""").read(UndoReply.serializer())
+        assertEquals(5, filing().examples, "an undone move isn't a lesson")
+
+        // Deleting isn't filing.
+        remove(inbox(), listOf(mom.uid), "delete").read(Removal.serializer())
+        assertEquals(5, filing().examples)
+    }
+
+    @Test
+    fun filingIsRememberedAndKeepsLearning() = server {
+        train("Receipts")
+        // Another order gets filed elsewhere, say from the phone.
+        mail.file("Receipts", mail.pastOrder(6))
+        post("/api/signout", "{}")
+
+        // Signing in again opens what was learned, then picks up the new one.
+        token = services.sessions.create(accountKey)
+        eventually("the new order is learned") { filing().examples == 6 }
+    }
+
+    @Test
+    fun trainingFewerFoldersForgetsTheRest() = server {
+        train("Receipts")
+        train()
+        val after = filing()
+        assertEquals(0, after.examples)
+        assertTrue(after.folders.none { it.trained })
     }
 }
