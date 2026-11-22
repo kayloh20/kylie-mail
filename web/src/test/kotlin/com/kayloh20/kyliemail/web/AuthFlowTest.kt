@@ -69,8 +69,9 @@ class AuthFlowTest {
             setBody(body)
         }.also(::remember)
 
-        suspend fun get(path: String): HttpResponse = client.get(path) {
+        suspend fun get(path: String, background: Boolean = false): HttpResponse = client.get(path) {
             cookie?.let { header(HttpHeaders.Cookie, "$SESSION_COOKIE=$it") }
+            if (background) header(BACKGROUND_HEADER, "1")
         }
 
         suspend fun delete(path: String): HttpResponse = client.delete(path) {
@@ -246,6 +247,29 @@ class AuthFlowTest {
         assertEquals(HttpStatusCode.OK, me().status)
         clock += Sessions.IDLE_MS + 1
         assertEquals(HttpStatusCode.Unauthorized, me().status)
+    }
+
+    @Test
+    fun checkingForMailInTheBackgroundDoesNotKeepYouSignedIn() = server {
+        setUp()
+        // A tab left open checks in every minute...
+        repeat(3) {
+            clock += Sessions.IDLE_MS / 3
+            assertEquals(HttpStatusCode.OK, get("/api/me", background = true).status)
+        }
+        // ...but only you using it counts, so after 2 idle hours it's signed out.
+        clock += 1_000
+        assertEquals(HttpStatusCode.Unauthorized, get("/api/me", background = true).status)
+        assertEquals(HttpStatusCode.Unauthorized, me().status)
+    }
+
+    @Test
+    fun usingThePageKeepsYouSignedIn() = server {
+        setUp()
+        repeat(3) {
+            clock += Sessions.IDLE_MS - 1_000
+            assertEquals(HttpStatusCode.OK, me().status)
+        }
     }
 
     @Test

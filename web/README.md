@@ -25,7 +25,12 @@ relay).
 ## Reading
 
 - **Folders, messages and the message itself**, side by side on a big screen and one at a time on
-  a phone. The ↻ button refreshes. Opening a message marks it read, like the app.
+  a phone. Opening a message marks it read, like the app.
+- **New mail shows up by itself**: the page checks once a minute while its tab is visible, and as
+  soon as you come back to it, without moving your selection, the message you're reading or where
+  the list is scrolled to. The tab's title shows how many are unread in the inbox. The ↻ button
+  checks right away. These checks don't count as using the page, so an open tab you've walked away
+  from still signs out after 2 idle hours.
 - **HTML email gets three locks.** The server strips anything active (scripts, forms, frames,
   plugins, event handlers, refreshes, outside style sheets). The message is then shown in a
   sandboxed frame where scripts can't run at all, under its own content security policy that

@@ -42,19 +42,23 @@ function toB64url(buffer) {
 
 // Talking to the server
 
-async function api(method, path, body) {
+/** [background] marks the page checking for mail by itself, which doesn't keep you signed in. */
+async function api(method, path, body, { background = false } = {}) {
+  const headers = body === undefined ? {} : { "Content-Type": "application/json" };
+  if (background) headers["X-Background"] = "1";
   const response = await fetch(path, {
     method,
     credentials: "same-origin",
-    headers: body === undefined ? {} : { "Content-Type": "application/json" },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(data.error || "Something went wrong. Try again.");
     error.status = response.status;
-    // Signed out on the server (expired, or it restarted): back to the sign-in screen.
-    if (response.status === 401 && !$("app").hidden) show("signin");
+    // Signed out on the server (expired, or it restarted): back to the sign-in screen, unless
+    // you're in the middle of writing; then Send says so and nothing is lost.
+    if (response.status === 401 && !$("app").hidden && !(background && $("compose").open)) show("signin");
     throw error;
   }
   return data;
@@ -280,6 +284,7 @@ const mail = {
   cursor: null, // the message the arrow keys move from
   detail: null, // the open message
   loadToken: 0,
+  busy: 0, // changes on their way to the server; checks for new mail wait for them
   lastRemoval: null, // the last delete or move, for Undo
   listId: "", // what the list shows: a folder or a search
   search: null, // { q, scope } while searching
@@ -352,6 +357,7 @@ function deletesForGood() {
 
 async function openMailbox() {
   show("app");
+  startChecking();
   loadSettings().catch(() => {});
   await loadFolders();
   const inbox = folderWithRole("inbox") || mail.folders[0];
@@ -364,6 +370,8 @@ async function loadFolders() {
 }
 
 function renderFolders() {
+  const inbox = folderWithRole("inbox");
+  document.title = inbox && inbox.unread > 0 ? `(${inbox.unread}) Kylie Mail` : "Kylie Mail";
   const showing = mail.search ? null : mail.folder;
   $("folder-list").replaceChildren(
     ...mail.folders.map((f) => {
@@ -510,7 +518,7 @@ function focusSearch() {
 
 // The message list
 
-function renderMessages() {
+function renderMessages({ scroll = true } = {}) {
   if (!mail.search) $("list-status").textContent = mail.messages.length ? "" : "No messages here.";
   const showFolders = !!mail.search && !mail.search.scope;
   mail.items = new Map();
@@ -534,16 +542,16 @@ function renderMessages() {
     }),
   );
   $("load-older").hidden = !mail.before || !!mail.search;
-  markSelected();
+  markSelected(scroll);
 }
 
-function markSelected() {
+function markSelected(scroll = true) {
   for (const item of $("message-list").children) {
     const key = item.dataset.key;
     item.setAttribute("aria-selected", String(mail.selected.has(key)));
     item.classList.toggle("cursor", key === mail.cursor);
   }
-  const current = mail.items && mail.items.get(mail.cursor);
+  const current = scroll && mail.items && mail.items.get(mail.cursor);
   if (current) current.scrollIntoView({ block: "nearest" });
 }
 
@@ -872,6 +880,7 @@ async function setFlag(keys, flag, value) {
     updateToolbar();
   };
   apply(value);
+  mail.busy++;
   try {
     for (const group of byFolder(changed)) {
       await api("POST", "/api/messages/flags", { folder: group.folder, validity: group.validity, uids: group.messages.map((m) => m.uid), flag, value });
@@ -879,6 +888,8 @@ async function setFlag(keys, flag, value) {
   } catch (e) {
     apply(!value);
     toast(e.message);
+  } finally {
+    mail.busy--;
   }
 }
 
@@ -908,6 +919,7 @@ async function removeSelected(action, target = null) {
   const done = [];
   const failed = [];
   let error = null;
+  mail.busy++;
   for (const group of byFolder(items.map(({ m }) => m))) {
     const groupItems = items.filter(({ m }) => m.folder === group.folder && m.validity === group.validity);
     const unseen = groupItems.filter(({ m }) => !m.seen).length;
@@ -923,6 +935,7 @@ async function removeSelected(action, target = null) {
       error = e;
     }
   }
+  mail.busy--;
   renderFolders();
   // Put back what didn't happen on the server.
   if (failed.length && mail.listId === listId) restore(failed);
@@ -1476,27 +1489,74 @@ function onKey(event) {
 }
 
 /** Reloads the newest messages without disturbing the selection. */
-async function softRefresh() {
+/**
+ * Reloads the newest messages without disturbing the selection, the open message or where the
+ * list is scrolled to: new mail appears at the top, read and flagged update, and mail removed
+ * elsewhere disappears.
+ */
+async function softRefresh({ background = false } = {}) {
   const token = mail.loadToken;
   try {
     if (mail.search) return;
-    const page = await api("GET", `/api/messages?folder=${encodeURIComponent(mail.folder)}`);
-    if (token !== mail.loadToken) return;
+    const page = await api("GET", `/api/messages?folder=${encodeURIComponent(mail.folder)}`, undefined, { background });
+    if (token !== mail.loadToken || mail.busy) return;
     const fresh = page.messages.map((m) => tag(page.folder, page.validity, m));
     const newest = new Set(fresh.map((m) => m.key));
     const oldestShown = Math.min(...fresh.map((m) => m.uid));
-    const older = mail.before ? mail.messages.filter((m) => !newest.has(m.key) && m.uid < oldestShown) : [];
+    const older = mail.before
+      ? mail.messages.filter((m) => !newest.has(m.key) && m.validity === page.validity && m.uid < oldestShown)
+      : [];
+    const known = new Set(mail.messages.map((m) => m.key));
+    const arrived = fresh.filter((m) => !known.has(m.key)).map((m) => m.key);
     mail.validity = page.validity;
     mail.messages = [...fresh, ...older];
     if (!mail.before) mail.before = page.before;
     const present = new Set(mail.messages.map((m) => m.key));
     const before = mail.selected.size;
-    mail.selected = new Set([...mail.selected].filter((uid) => present.has(uid)));
-    renderMessages();
+    mail.selected = new Set([...mail.selected].filter((key) => present.has(key)));
+    if (mail.cursor !== null && !present.has(mail.cursor)) mail.cursor = null;
+    const list = $("message-list");
+    const top = list.scrollTop;
+    renderMessages({ scroll: false });
+    // Keep what you were looking at in place when new rows arrive above it.
+    if (top > 0) list.scrollTop = top + arrived.reduce((h, key) => h + (mail.items.get(key)?.offsetHeight || 0), 0);
     if (mail.selected.size !== before) syncReader();
+    else updateToolbar();
   } catch {
-    // Not worth interrupting for: R reloads.
+    // Not worth interrupting for: ↻ reloads.
   }
+}
+
+// Checking for new mail
+
+const CHECK_EVERY_MS = 60_000;
+let lastCheck = 0;
+let checking = false;
+let checkTimer = null;
+
+/**
+ * Looks for new mail once a minute while the tab is visible, and as soon as you come back to it.
+ * These checks don't count as using the page, so an open tab still signs out after 2 idle hours.
+ */
+async function checkForMail() {
+  if (checking || $("app").hidden || document.visibilityState !== "visible" || mail.busy) return;
+  checking = true;
+  lastCheck = Date.now();
+  try {
+    mail.folders = await api("GET", "/api/folders", undefined, { background: true });
+    renderFolders();
+    if (!mail.search && mail.folder) await softRefresh({ background: true });
+  } catch {
+    // The next check will try again.
+  } finally {
+    checking = false;
+  }
+}
+
+function startChecking() {
+  clearInterval(checkTimer);
+  lastCheck = Date.now();
+  checkTimer = setInterval(checkForMail, CHECK_EVERY_MS);
 }
 
 async function refresh() {
@@ -1571,7 +1631,13 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && Date.now() - lastCheck > CHECK_EVERY_MS / 2) checkForMail();
+  });
+
   $("signout").addEventListener("click", async () => {
+    clearInterval(checkTimer);
+    document.title = "Kylie Mail";
     await api("POST", "/api/signout").catch(() => {});
     closeMessage();
     $("message-list").replaceChildren();

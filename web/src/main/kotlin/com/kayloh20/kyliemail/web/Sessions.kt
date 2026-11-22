@@ -32,8 +32,12 @@ class Sessions(private val now: () -> Long = System::currentTimeMillis) {
         return token
     }
 
-    /** The session for [token], if it's still valid, marked as just used. */
-    fun get(token: String?): Session? {
+    /**
+     * The session for [token], if it's still valid. It counts as used unless [touch] is false, as
+     * for the page checking for new mail by itself: an open tab nobody looks at still signs out
+     * after [IDLE_MS].
+     */
+    fun get(token: String?, touch: Boolean = true): Session? {
         if (token.isNullOrEmpty()) return null
         val k = key(token)
         val session = sessions[k] ?: return null
@@ -42,7 +46,7 @@ class Sessions(private val now: () -> Long = System::currentTimeMillis) {
             drop(k)
             return null
         }
-        session.lastSeenAt = time
+        if (touch) session.lastSeenAt = time
         return session
     }
 

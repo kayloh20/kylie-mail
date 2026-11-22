@@ -607,4 +607,21 @@ class MailFlowTest {
         val detail = get("/api/message?folder=INBOX&validity=${hit.validity}&uid=${hit.summary.uid}").read(MessageDetail.serializer())
         assertEquals("Dinner Sunday?", detail.summary.subject)
     }
+
+    // New mail while the page is open
+
+    @Test
+    fun newMailShowsUpOnTheNextCheck() = server {
+        val before = inbox()
+        assertEquals(4, folders()[0].unread)
+        // The inbox is now open on the server's connection; mail arrives meanwhile.
+        mail.deliver(mail.message("Madison <madison@example.org>", "Practice moved to 4pm") { setText("Don't be late!") })
+        val after = app.client.get("/api/messages?folder=INBOX") {
+            token?.let { header(HttpHeaders.Cookie, "$SESSION_COOKIE=$it") }
+            header(BACKGROUND_HEADER, "1")
+        }.read(MessagePage.serializer())
+        assertEquals("Practice moved to 4pm", after.messages.first().subject)
+        assertEquals(before.total + 1, after.total)
+        assertEquals(5, folders()[0].unread)
+    }
 }

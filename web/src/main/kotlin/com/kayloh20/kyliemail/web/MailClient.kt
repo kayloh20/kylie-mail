@@ -184,6 +184,8 @@ class MailClient(
     /** Up to [size] messages, newest first, older than message number [before]. */
     suspend fun page(folderId: String, before: Int?, size: Int = 50): MessagePage = run { store ->
         val f = open(store, folderId)
+        // A folder kept open since last time only hears about new mail when it asks; NOOP asks.
+        f.doCommand { protocol -> (protocol as IMAPProtocol).noop(); null }
         val count = f.messageCount
         val end = minOf(before?.minus(1) ?: count, count)
         val start = maxOf(1, end - size + 1)

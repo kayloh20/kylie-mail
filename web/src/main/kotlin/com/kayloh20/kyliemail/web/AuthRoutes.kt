@@ -143,7 +143,12 @@ private fun prfSecret(value: String): ByteArray {
 
 /** The signed-in session, or a 401. */
 fun ApplicationCall.requireSession(services: Services): Session =
-    services.sessions.get(sessionToken()) ?: fail(HttpStatusCode.Unauthorized, "Sign in first.")
+    services.sessions.get(sessionToken(), touch = !isBackground()) ?: fail(HttpStatusCode.Unauthorized, "Sign in first.")
+
+/** The page checking for new mail by itself, rather than you doing something. */
+fun ApplicationCall.isBackground(): Boolean = request.headers[BACKGROUND_HEADER] == "1"
+
+const val BACKGROUND_HEADER = "X-Background"
 
 fun Route.authRoutes(services: Services) = route("/api") {
     val vault = services.vault
@@ -151,7 +156,7 @@ fun Route.authRoutes(services: Services) = route("/api") {
     val sessions = services.sessions
 
     get("/state") {
-        call.respond(StateReply(vault.account() != null, sessions.get(call.sessionToken()) != null))
+        call.respond(StateReply(vault.account() != null, sessions.get(call.sessionToken(), touch = !call.isBackground()) != null))
     }
 
     // First-time setup: setup code and iCloud login, then a passkey.
