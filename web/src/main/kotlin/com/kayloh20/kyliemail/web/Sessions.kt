@@ -3,7 +3,10 @@ package com.kayloh20.kyliemail.web
 import java.util.concurrent.ConcurrentHashMap
 
 /** A signed-in browser. It holds the account key, in memory only, until it signs out or expires. */
-class Session(val accountKey: ByteArray, val createdAt: Long, var lastSeenAt: Long, val viaRecoveryCode: Boolean)
+class Session(val accountKey: ByteArray, val createdAt: Long, var lastSeenAt: Long, val viaRecoveryCode: Boolean) {
+    /** This browser's connection to iCloud, opened on first use and closed when the session ends. */
+    @Volatile var mail: MailClient? = null
+}
 
 /**
  * Signed-in browsers, kept only in memory: restarting the server signs everyone out, and nothing
@@ -44,10 +47,14 @@ class Sessions(private val now: () -> Long = System::currentTimeMillis) {
 
     /** Removes a session by its hashed key and wipes its copy of the account key. */
     private fun drop(k: String) {
-        sessions.remove(k)?.accountKey?.fill(0)
+        val session = sessions.remove(k) ?: return
+        session.mail?.let { runCatching { it.close() } }
+        session.mail = null
+        session.accountKey.fill(0)
     }
 
-    private fun prune() {
+    /** Ends expired sessions, closing their connections. */
+    fun prune() {
         val time = now()
         sessions.entries.filter { time - it.value.lastSeenAt > IDLE_MS || time - it.value.createdAt > MAX_MS }
             .forEach { drop(it.key) }

@@ -20,8 +20,8 @@ suggested filing.
 
 ## On the web
 
-The web version lives in [`web/`](web/README.md) and runs on its own server. Passkey sign-in works;
-reading mail comes next.
+The web version lives in [`web/`](web/README.md) and runs on its own server. Passkey sign-in and
+reading mail work; deleting, moving and filing come next.
 
 ## Signing in
 

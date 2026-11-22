@@ -43,6 +43,7 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json:$ktor")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("com.webauthn4j:webauthn4j-core:0.32.0.RELEASE")
+    implementation("org.jsoup:jsoup:1.24.1")
     // The same mail library as the app (javax.mail, version 1.6), in its plain-Java build.
     implementation("com.sun.mail:jakarta.mail:1.6.8")
     runtimeOnly("org.slf4j:slf4j-simple:2.0.17")
@@ -50,6 +51,8 @@ dependencies {
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
     testImplementation("io.ktor:ktor-server-test-host:$ktor")
+    // A real IMAP server for tests; it uses our mail library instead of bringing its own.
+    testImplementation("com.icegreen:greenmail:1.6.15") { exclude(group = "com.sun.mail") }
 }
 
 application {

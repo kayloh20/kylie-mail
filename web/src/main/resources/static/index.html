@@ -10,7 +10,7 @@
 <script src="/assets/app.js" defer></script>
 </head>
 <body>
-<main>
+<main id="auth">
   <header class="brand">
     <img src="/assets/icon.svg" alt="" width="56" height="56">
     <h1>Kylie Mail</h1>
@@ -75,34 +75,85 @@
       </form>
     </details>
   </section>
-
-  <section id="home" hidden>
-    <div class="card">
-      <div class="row spread">
-        <p>Signed in as <strong id="me-email"></strong></p>
-        <button type="button" id="signout" class="secondary">Sign out</button>
-      </div>
-      <p id="recovered" class="warning" hidden>You signed in with a recovery code. Add a passkey below so you don't run out.</p>
-      <p class="note">Your mailbox is coming next.</p>
-    </div>
-
-    <div class="card">
-      <h2>Passkeys</h2>
-      <ul id="passkey-list" class="list"></ul>
-      <form id="add-passkey-form" class="row" autocomplete="off">
-        <input name="name" maxlength="60" placeholder="Name, such as My iPhone" aria-label="Name for the new passkey">
-        <button type="submit" class="secondary">Add a passkey</button>
-      </form>
-      <p class="error" role="alert"></p>
-    </div>
-
-    <div class="card">
-      <h2>Recovery codes</h2>
-      <p><span id="codes-left"></span> unused.</p>
-      <button type="button" id="new-codes" class="secondary">Make new codes</button>
-      <p class="error" role="alert"></p>
-    </div>
-  </section>
 </main>
+
+<div id="app" hidden>
+  <nav id="sidebar" aria-label="Folders">
+    <div class="brand small">
+      <img src="/assets/icon.svg" alt="" width="28" height="28">
+      <span>Kylie Mail</span>
+    </div>
+    <ul id="folder-list" class="folders"></ul>
+    <label class="folder-select">Folder
+      <select id="folder-select"></select>
+    </label>
+    <div class="sidebar-foot">
+      <button type="button" id="open-settings" class="link">Settings</button>
+      <button type="button" id="signout" class="link">Sign out</button>
+    </div>
+  </nav>
+
+  <section id="list-pane" aria-label="Messages">
+    <header class="pane-head">
+      <h2 id="folder-title">Inbox</h2>
+      <button type="button" id="refresh" class="icon" title="Refresh (R)" aria-label="Refresh">↻</button>
+    </header>
+    <p id="recovered" class="warning" hidden>You signed in with a recovery code. Add a passkey in Settings so you don't run out.</p>
+    <p id="list-status" class="note pad" role="status"></p>
+    <ul id="message-list" class="messages" role="listbox" aria-label="Messages" tabindex="0"></ul>
+    <button type="button" id="load-older" class="secondary wide" hidden>Load older messages</button>
+  </section>
+
+  <section id="reader" aria-label="Message">
+    <div id="reader-empty" class="empty">
+      <p>Select a message to read it.</p>
+      <p class="note"><kbd>↑</kbd> <kbd>↓</kbd> or <kbd>J</kbd> <kbd>K</kbd> to move, <kbd>Esc</kbd> to close</p>
+    </div>
+    <article id="message" hidden>
+      <header class="message-head">
+        <button type="button" id="back" class="link back">‹ Back</button>
+        <h2 id="message-subject"></h2>
+        <p><strong id="message-from"></strong> <span id="message-address" class="note"></span></p>
+        <p class="note"><span id="message-date"></span></p>
+        <p class="note" id="message-to"></p>
+      </header>
+      <div id="images-bar" class="images-bar" hidden>
+        <span>Images from the internet are hidden, so the sender can't tell you opened this.</span>
+        <button type="button" id="load-images" class="secondary">Load images</button>
+        <button type="button" id="trust-sender" class="link">Always load from this sender</button>
+      </div>
+      <ul id="attachments" class="attachments" aria-label="Attachments"></ul>
+      <p id="message-status" class="note pad" role="status"></p>
+      <iframe id="message-body" title="Message"
+              sandbox="allow-popups allow-popups-to-escape-sandbox"
+              referrerpolicy="no-referrer"></iframe>
+    </article>
+  </section>
+</div>
+
+<dialog id="settings">
+  <div class="dialog-head">
+    <h2>Settings</h2>
+    <button type="button" id="close-settings" class="icon" aria-label="Close">✕</button>
+  </div>
+  <p>Signed in as <strong id="me-email"></strong></p>
+
+  <section class="card">
+    <h3>Passkeys</h3>
+    <ul id="passkey-list" class="list"></ul>
+    <form id="add-passkey-form" class="row" autocomplete="off">
+      <input name="name" maxlength="60" placeholder="Name, such as My iPhone" aria-label="Name for the new passkey">
+      <button type="submit" class="secondary">Add a passkey</button>
+    </form>
+    <p class="error" role="alert"></p>
+  </section>
+
+  <section class="card">
+    <h3>Recovery codes</h3>
+    <p><span id="codes-left"></span> unused.</p>
+    <button type="button" id="new-codes" class="secondary">Make new codes</button>
+    <p class="error" role="alert"></p>
+  </section>
+</dialog>
 </body>
 </html>

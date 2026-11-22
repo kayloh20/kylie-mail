@@ -1,15 +1,21 @@
 "use strict";
 
-// Kylie Mail's sign-in pages. Passkeys sign you in, and the secret each passkey's PRF extension
-// produces unlocks the key that seals your app-specific password on the server.
+// Kylie Mail in the browser. Passkeys sign you in, and the secret each passkey's PRF extension
+// produces unlocks the key that seals your app-specific password on the server. Signed in, you
+// get the mailbox: folders, messages, and each email in a sandboxed frame.
 
-const views = ["loading", "unsupported", "setup", "codes", "signin", "home"];
+const views = ["loading", "unsupported", "setup", "codes", "signin"];
 const $ = (id) => document.getElementById(id);
 
+/** Shows one sign-in screen, or the mailbox when [view] is "app". */
 function show(view) {
+  $("auth").hidden = view === "app";
+  $("app").hidden = view !== "app";
   for (const v of views) $(v).hidden = v !== view;
+  if (view === "app") return;
+  if ($("settings").open) $("settings").close();
   const first = $(view).querySelector("input, button");
-  if (first && view !== "home") first.focus();
+  if (first) first.focus();
 }
 
 function setError(container, message) {
@@ -47,6 +53,8 @@ async function api(method, path, body) {
   if (!response.ok) {
     const error = new Error(data.error || "Something went wrong. Try again.");
     error.status = response.status;
+    // Signed out on the server (expired, or it restarted): back to the sign-in screen.
+    if (response.status === 401 && !$("app").hidden) show("signin");
     throw error;
   }
   return data;
@@ -152,18 +160,34 @@ async function busy(button, task) {
   }
 }
 
-// Screens
+// Sign-in screens
 
 function showCodes(codes, then) {
+  if ($("settings").open) $("settings").close();
   const list = $("code-list");
   list.replaceChildren(...codes.map((code) => Object.assign(document.createElement("li"), { textContent: code })));
   $("codes-saved").checked = false;
   $("codes-done").disabled = true;
   $("codes-done").onclick = then;
+  $("copy-codes").textContent = "Copy";
   show("codes");
 }
 
-async function showHome() {
+async function start() {
+  if (!window.PublicKeyCredential || !navigator.credentials) return show("unsupported");
+  try {
+    const state = await api("GET", "/api/state");
+    if (!state.hasAccount) return show("setup");
+    if (state.signedIn) return await openMailbox();
+    show("signin");
+  } catch (e) {
+    $("loading").querySelector("p").textContent = "Couldn't reach Kylie Mail. Reload to try again.";
+  }
+}
+
+// Settings: passkeys and recovery codes
+
+async function loadSettings() {
   const me = await api("GET", "/api/me");
   $("me-email").textContent = me.email;
   $("recovered").hidden = !me.signedInWithRecoveryCode;
@@ -185,26 +209,298 @@ async function showHome() {
           busy(remove, async () => {
             if (!confirm(`Remove “${p.name}”? It won't be able to sign in any more.`)) return;
             await api("DELETE", `/api/passkeys/${encodeURIComponent(p.id)}`).catch((e) => setError(list.parentElement, e.message));
-            await showHome();
+            await loadSettings();
           });
         item.append(remove);
       }
       return item;
     }),
   );
-  show("home");
+  return me;
 }
 
-async function start() {
-  if (!window.PublicKeyCredential || !navigator.credentials) return show("unsupported");
+// The mailbox
+
+const mail = {
+  folders: [],
+  folder: null, // folder id
+  validity: 0,
+  messages: [],
+  before: null,
+  selected: null, // uid
+  detail: null,
+  loadToken: 0,
+};
+
+const shortDate = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+const longDate = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "short" });
+const timeOnly = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+const oldDate = new Intl.DateTimeFormat(undefined, { year: "2-digit", month: "numeric", day: "numeric" });
+
+function listDate(ms) {
+  if (!ms) return "";
+  const d = new Date(ms);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return timeOnly.format(d);
+  if (d.getFullYear() === now.getFullYear()) return shortDate.format(d);
+  return oldDate.format(d);
+}
+
+function formatSize(bytes) {
+  if (bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function el(tag, props = {}, ...children) {
+  const node = Object.assign(document.createElement(tag), props);
+  node.append(...children.filter((c) => c !== null && c !== undefined));
+  return node;
+}
+
+async function openMailbox() {
+  show("app");
+  loadSettings().catch(() => {});
+  await loadFolders();
+  const inbox = mail.folders.find((f) => f.role === "inbox") || mail.folders[0];
+  if (inbox) await openFolder(inbox.id);
+}
+
+async function loadFolders() {
+  mail.folders = await api("GET", "/api/folders");
+  renderFolders();
+}
+
+function renderFolders() {
+  $("folder-list").replaceChildren(
+    ...mail.folders.map((f) => {
+      const button = el(
+        "button",
+        { type: "button", title: f.name },
+        el("span", { textContent: f.name }),
+        f.unread > 0 && f.role !== "sent" && f.role !== "drafts" && f.role !== "trash" ? el("span", { className: "count", textContent: String(f.unread) }) : null,
+      );
+      button.style.paddingLeft = `${12 + f.depth * 14}px`;
+      button.setAttribute("aria-current", String(f.id === mail.folder));
+      button.onclick = () => openFolder(f.id);
+      return el("li", {}, button);
+    }),
+  );
+  $("folder-select").replaceChildren(
+    ...mail.folders.map((f) =>
+      el("option", { value: f.id, selected: f.id === mail.folder, textContent: f.unread > 0 ? `${f.name} (${f.unread})` : f.name }),
+    ),
+  );
+}
+
+async function openFolder(id) {
+  const token = ++mail.loadToken;
+  mail.folder = id;
+  mail.messages = [];
+  mail.selected = null;
+  closeMessage();
+  renderFolders();
+  const folder = mail.folders.find((f) => f.id === id);
+  $("folder-title").textContent = folder ? folder.name : id;
+  $("message-list").replaceChildren();
+  $("load-older").hidden = true;
+  $("list-status").textContent = "Loading…";
   try {
-    const state = await api("GET", "/api/state");
-    if (!state.hasAccount) return show("setup");
-    if (state.signedIn) return await showHome();
-    show("signin");
+    const page = await api("GET", `/api/messages?folder=${encodeURIComponent(id)}`);
+    if (token !== mail.loadToken) return;
+    mail.validity = page.validity;
+    mail.messages = page.messages;
+    mail.before = page.before;
+    $("list-status").textContent = page.messages.length ? "" : "No messages here.";
+    renderMessages();
   } catch (e) {
-    $("loading").querySelector("p").textContent = "Couldn't reach Kylie Mail. Reload to try again.";
+    if (token === mail.loadToken) $("list-status").textContent = e.message;
   }
+}
+
+async function loadOlder() {
+  if (!mail.before) return;
+  const token = mail.loadToken;
+  await busy($("load-older"), async () => {
+    try {
+      const page = await api("GET", `/api/messages?folder=${encodeURIComponent(mail.folder)}&before=${mail.before}`);
+      if (token !== mail.loadToken) return;
+      const known = new Set(mail.messages.map((m) => m.uid));
+      mail.messages.push(...page.messages.filter((m) => !known.has(m.uid)));
+      mail.before = page.before;
+      renderMessages();
+    } catch (e) {
+      $("list-status").textContent = e.message;
+    }
+  });
+}
+
+function renderMessages() {
+  const list = $("message-list");
+  list.replaceChildren(
+    ...mail.messages.map((m) => {
+      const marks = [m.flagged ? "⚑" : "", m.hasAttachments ? "📎" : "", m.answered ? "↩" : ""].join(" ").trim();
+      const item = el(
+        "li",
+        { id: `m-${m.uid}`, className: m.seen ? "" : "unread" },
+        el("span", { className: "from", textContent: m.fromName || m.fromAddress || "(unknown sender)" }),
+        el("span", { className: "date", textContent: listDate(m.date) }),
+        el("span", { className: "subject", textContent: m.subject }, marks ? el("span", { className: "marks", textContent: ` ${marks}` }) : null),
+      );
+      item.setAttribute("role", "option");
+      item.setAttribute("aria-selected", String(m.uid === mail.selected));
+      item.onclick = () => selectMessage(m.uid);
+      return item;
+    }),
+  );
+  $("load-older").hidden = !mail.before;
+}
+
+function markSelected() {
+  for (const item of $("message-list").children) {
+    item.setAttribute("aria-selected", String(item.id === `m-${mail.selected}`));
+  }
+  const current = $(`m-${mail.selected}`);
+  if (current) current.scrollIntoView({ block: "nearest" });
+}
+
+function bodyUrl(detail, images) {
+  const q = `folder=${encodeURIComponent(detail.folder)}&validity=${detail.validity}&uid=${detail.summary.uid}`;
+  return `/api/message/body?${q}${images ? "&images=1" : ""}`;
+}
+
+async function selectMessage(uid) {
+  mail.selected = uid;
+  markSelected();
+  $("app").classList.add("reading");
+  $("reader-empty").hidden = true;
+  $("message").hidden = false;
+  const summary = mail.messages.find((m) => m.uid === uid);
+  $("message-subject").textContent = summary ? summary.subject : "";
+  $("message-from").textContent = summary ? summary.fromName : "";
+  $("message-address").textContent = summary && summary.fromAddress !== summary.fromName ? `<${summary.fromAddress}>` : "";
+  $("message-date").textContent = summary && summary.date ? longDate.format(new Date(summary.date)) : "";
+  $("message-to").textContent = "";
+  $("images-bar").hidden = true;
+  $("attachments").replaceChildren();
+  $("message-status").textContent = "Loading…";
+  $("message-body").hidden = true;
+  $("message-body").removeAttribute("src");
+  try {
+    const detail = await api(
+      "GET",
+      `/api/message?folder=${encodeURIComponent(mail.folder)}&validity=${mail.validity}&uid=${uid}`,
+    );
+    if (mail.selected !== uid) return;
+    mail.detail = detail;
+    showMessage(detail);
+    if (summary && !summary.seen) markSeen([uid], true);
+  } catch (e) {
+    if (mail.selected === uid) $("message-status").textContent = e.message;
+    if (e.status === 409) $("message-status").textContent = `${e.message} (press R)`;
+  }
+}
+
+function showMessage(detail) {
+  const s = detail.summary;
+  $("message-subject").textContent = s.subject;
+  $("message-from").textContent = s.fromName;
+  $("message-address").textContent = s.fromAddress && s.fromAddress !== s.fromName ? `<${s.fromAddress}>` : "";
+  $("message-date").textContent = s.date ? longDate.format(new Date(s.date)) : "";
+  const to = detail.to.length ? `To ${detail.to.join(", ")}` : "";
+  const cc = detail.cc.length ? ` · Cc ${detail.cc.join(", ")}` : "";
+  $("message-to").textContent = to + cc;
+  const showImages = detail.imagesAllowed;
+  $("images-bar").hidden = !(detail.remoteImages > 0 && !showImages);
+  $("trust-sender").hidden = !s.fromAddress;
+  $("attachments").replaceChildren(
+    ...detail.attachments.map((a) => {
+      const q = `folder=${encodeURIComponent(detail.folder)}&validity=${detail.validity}&uid=${s.uid}&path=${encodeURIComponent(a.path)}`;
+      const link = el("a", { href: `/api/message/attachment?${q}`, download: a.filename, title: `Download ${a.filename}` },
+        el("span", { textContent: `📎 ${a.filename}` }),
+        el("small", { textContent: formatSize(a.size) }));
+      return el("li", {}, link);
+    }),
+  );
+  $("message-status").textContent = "";
+  $("message-body").hidden = false;
+  $("message-body").src = bodyUrl(detail, showImages);
+}
+
+function closeMessage() {
+  mail.detail = null;
+  $("app").classList.remove("reading");
+  $("message").hidden = true;
+  $("reader-empty").hidden = false;
+  $("message-body").removeAttribute("src");
+}
+
+async function markSeen(uids, seen) {
+  const changed = mail.messages.filter((m) => uids.includes(m.uid) && m.seen !== seen);
+  if (!changed.length) return;
+  for (const m of changed) {
+    m.seen = seen;
+    const item = $(`m-${m.uid}`);
+    if (item) item.classList.toggle("unread", !seen);
+  }
+  const folder = mail.folders.find((f) => f.id === mail.folder);
+  if (folder) {
+    folder.unread = Math.max(0, folder.unread + (seen ? -changed.length : changed.length));
+    renderFolders();
+  }
+  try {
+    await api("POST", "/api/messages/seen", { folder: mail.folder, validity: mail.validity, uids: changed.map((m) => m.uid), seen });
+  } catch (e) {
+    $("list-status").textContent = e.message;
+  }
+}
+
+function moveSelection(step) {
+  if (!mail.messages.length) return;
+  const index = mail.messages.findIndex((m) => m.uid === mail.selected);
+  const next = index < 0 ? 0 : Math.min(mail.messages.length - 1, Math.max(0, index + step));
+  if (index === next) return;
+  selectMessage(mail.messages[next].uid);
+}
+
+function typing(event) {
+  const t = event.target;
+  return t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement || (t && t.isContentEditable);
+}
+
+function onKey(event) {
+  if ($("app").hidden || $("settings").open || typing(event) || event.metaKey || event.ctrlKey || event.altKey) return;
+  switch (event.key) {
+    case "ArrowDown":
+    case "j":
+      moveSelection(1);
+      break;
+    case "ArrowUp":
+    case "k":
+      moveSelection(-1);
+      break;
+    case "Escape":
+      if (mail.selected !== null) {
+        mail.selected = null;
+        markSelected();
+        closeMessage();
+        $("message-list").focus();
+      }
+      break;
+    case "r":
+    case "R":
+      refresh();
+      break;
+    default:
+      return;
+  }
+  event.preventDefault();
+}
+
+async function refresh() {
+  await loadFolders().catch(() => {});
+  if (mail.folder) await openFolder(mail.folder);
 }
 
 // Wiring
@@ -222,7 +518,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const made = await createPasskey(started.options);
         const done = await api("POST", "/api/setup/finish", { pendingId: started.pendingId, ...made });
         form.reset();
-        showCodes(done.recoveryCodes, showHome);
+        showCodes(done.recoveryCodes, openMailbox);
       } catch (e) {
         setError(form, explain(e));
       }
@@ -247,7 +543,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const started = await api("POST", "/api/signin/start");
         const used = await usePasskey(started.options);
         await api("POST", "/api/signin/finish", { pendingId: started.pendingId, ...used });
-        await showHome();
+        await openMailbox();
       } catch (e) {
         setError(section, explain(e));
       }
@@ -262,7 +558,7 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         await api("POST", "/api/recover", Object.fromEntries(new FormData(form)));
         form.reset();
-        await showHome();
+        await openMailbox();
       } catch (e) {
         setError(form, explain(e));
       }
@@ -271,8 +567,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
   $("signout").addEventListener("click", async () => {
     await api("POST", "/api/signout").catch(() => {});
+    closeMessage();
+    $("message-list").replaceChildren();
     show("signin");
   });
+
+  $("open-settings").addEventListener("click", async () => {
+    await loadSettings().catch(() => {});
+    $("settings").showModal();
+  });
+  $("close-settings").addEventListener("click", () => $("settings").close());
 
   $("add-passkey-form").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -285,9 +589,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const made = await createPasskey(started.options);
         await api("POST", "/api/passkeys/finish", { pendingId: started.pendingId, ...made });
         form.reset();
-        await showHome();
+        await loadSettings();
       } catch (e) {
-        if (e.status === 401) return show("signin");
         setError(card, explain(e));
       }
     });
@@ -300,13 +603,50 @@ document.addEventListener("DOMContentLoaded", () => {
     busy(event.target, async () => {
       try {
         const made = await api("POST", "/api/recovery-codes");
-        showCodes(made.recoveryCodes, showHome);
+        showCodes(made.recoveryCodes, () => {
+          show("app");
+          loadSettings().then(() => $("settings").showModal()).catch(() => {});
+        });
       } catch (e) {
-        if (e.status === 401) return show("signin");
         setError(card, explain(e));
       }
     });
   });
+
+  $("folder-select").addEventListener("change", (event) => openFolder(event.target.value));
+  $("refresh").addEventListener("click", refresh);
+  $("load-older").addEventListener("click", loadOlder);
+  $("back").addEventListener("click", () => {
+    mail.selected = null;
+    markSelected();
+    closeMessage();
+  });
+  $("load-images").addEventListener("click", () => {
+    if (!mail.detail) return;
+    $("images-bar").hidden = true;
+    $("message-body").src = bodyUrl(mail.detail, true);
+  });
+  $("trust-sender").addEventListener("click", async () => {
+    const detail = mail.detail;
+    if (!detail) return;
+    await api("POST", "/api/image-senders", { address: detail.summary.fromAddress }).catch(() => {});
+    detail.imagesAllowed = true;
+    $("images-bar").hidden = true;
+    $("message-body").src = bodyUrl(detail, true);
+  });
+  $("message-list").addEventListener("focus", () => {
+    if (mail.selected === null && mail.messages.length) {
+      mail.selected = mail.messages[0].uid;
+      markSelected();
+    }
+  });
+  $("message-list").addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && mail.selected !== null) {
+      selectMessage(mail.selected);
+      event.preventDefault();
+    }
+  });
+  document.addEventListener("keydown", onKey);
 
   start();
 });

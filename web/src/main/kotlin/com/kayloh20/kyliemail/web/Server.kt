@@ -15,9 +15,18 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import kotlinx.serialization.json.Json
 import java.nio.file.Path
+import com.kayloh20.kyliemail.data.mail.ImapConnector
+import com.kayloh20.kyliemail.data.mail.ServerConfig
+import io.ktor.server.application.ApplicationStopped
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** The real services for [config], with data kept in its data folder. */
-fun Services.Companion.create(config: WebConfig, mailLogin: MailLogin = ImapMailLogin()): Services {
+fun Services.Companion.create(
+    config: WebConfig,
+    mailServer: ServerConfig = ServerConfig.ICLOUD,
+    mailLogin: MailLogin = ImapMailLogin(ImapConnector(mailServer)),
+): Services {
     val dataDir = Path.of(config.dataDir)
     return Services(
         config = config,
@@ -26,12 +35,21 @@ fun Services.Companion.create(config: WebConfig, mailLogin: MailLogin = ImapMail
         sessions = Sessions(),
         setupCode = SetupCode(dataDir.resolve("setup-code")),
         mailLogin = mailLogin,
+        mailServer = mailServer,
     )
 }
 
 /** Everything the server does, set up for [config]. Tests call this with their own [services]. */
 fun Application.webModule(config: WebConfig, services: Services = Services.create(config)) {
     install(SecurityHeadersPlugin)
+    // Close the iCloud connections of sessions that have expired.
+    val pruner = launch {
+        while (true) {
+            delay(60_000)
+            services.sessions.prune()
+        }
+    }
+    monitor.subscribe(ApplicationStopped) { pruner.cancel() }
     install(SameOriginPlugin) { origin = config.origin }
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true; encodeDefaults = true })
@@ -59,6 +77,7 @@ fun Application.webModule(config: WebConfig, services: Services = Services.creat
     routing {
         get("/healthz") { call.respondText("ok", ContentType.Text.Plain) }
         authRoutes(services)
+        mailRoutes(services)
         staticResources("/assets", "static/assets")
         staticResources("/", "static", index = "index.html")
     }

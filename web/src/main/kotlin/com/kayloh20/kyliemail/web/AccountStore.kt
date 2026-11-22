@@ -24,6 +24,8 @@ data class Account(
     val passkeys: List<StoredPasskey>,
     val recoveryCodes: List<StoredRecoveryCode>,
     val createdAt: Long,
+    /** Senders whose images from the internet load without asking, sealed with the account key. */
+    val sealedImageSenders: String? = null,
 )
 
 @Serializable

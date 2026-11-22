@@ -28,7 +28,6 @@ object SecurityHeaders {
         "Referrer-Policy" to "no-referrer",
         "Cross-Origin-Opener-Policy" to "same-origin",
         "Cross-Origin-Resource-Policy" to "same-origin",
-        "Cross-Origin-Embedder-Policy" to "require-corp",
         "Permissions-Policy" to
             "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=(), " +
             "publickey-credentials-get=(self), publickey-credentials-create=(self)",
@@ -39,7 +38,17 @@ object SecurityHeaders {
 /** Adds [SecurityHeaders] to every response and keeps mail out of every cache. */
 val SecurityHeadersPlugin = createApplicationPlugin("SecurityHeaders") {
     onCall { call ->
-        for ((name, value) in SecurityHeaders.all) call.response.headers.append(name, value, safeOnly = false)
+        val headers = when (call.request.path()) {
+            // An email is shown in a frame on Kylie Mail's own page, under its own, stricter rules.
+            EMAIL_BODY_PATH -> SecurityHeaders.all + mapOf(
+                "Content-Security-Policy" to MailHtml.contentSecurityPolicy(call.request.queryParameters["images"] == "1"),
+                "X-Frame-Options" to "SAMEORIGIN",
+            )
+            // Attachments are downloads; if a browser shows one anyway, nothing in it can run.
+            ATTACHMENT_PATH -> SecurityHeaders.all + ("Content-Security-Policy" to "sandbox; default-src 'none'")
+            else -> SecurityHeaders.all
+        }
+        for ((name, value) in headers) call.response.headers.append(name, value, safeOnly = false)
         val cache = if (call.request.path().startsWith("/assets/")) "no-cache" else "no-store"
         call.response.headers.append(HttpHeaders.CacheControl, cache, safeOnly = false)
     }

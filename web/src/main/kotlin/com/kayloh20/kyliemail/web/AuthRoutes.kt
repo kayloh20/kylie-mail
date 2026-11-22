@@ -2,6 +2,7 @@ package com.kayloh20.kyliemail.web
 
 import com.kayloh20.kyliemail.web.Crypto.b64url
 import com.kayloh20.kyliemail.web.Crypto.fromB64url
+import com.kayloh20.kyliemail.data.mail.ServerConfig
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
@@ -43,7 +44,16 @@ class Services(
     val setupCode: SetupCode,
     val mailLogin: MailLogin,
     val now: () -> Long = System::currentTimeMillis,
+    val mailServer: ServerConfig = ServerConfig.ICLOUD,
 ) {
+    /** The session's connection to iCloud, made on first use. */
+    fun mail(session: Session): MailClient = synchronized(session) {
+        session.mail ?: run {
+            val account = vault.account() ?: throw ApiError(HttpStatusCode.Conflict, "Kylie Mail isn't set up yet.")
+            MailClient(account.username, { vault.password(session.accountKey) }, mailServer).also { session.mail = it }
+        }
+    }
+
     class PendingSetup(
         val email: String,
         val username: String,

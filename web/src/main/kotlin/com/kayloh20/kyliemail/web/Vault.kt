@@ -101,6 +101,22 @@ class Vault(private val store: AccountStore, private val now: () -> Long = Syste
         return Crypto.open(accountKey, fromB64url(account.sealedPassword), PASSWORD_AD)?.toString(Charsets.UTF_8)
     }
 
+    /** Senders whose images from the internet load without asking. */
+    fun imageSenders(accountKey: ByteArray): Set<String> {
+        val sealed = store.get()?.sealedImageSenders ?: return emptySet()
+        val text = Crypto.open(accountKey, fromB64url(sealed), IMAGE_SENDERS_AD)?.toString(Charsets.UTF_8) ?: return emptySet()
+        return text.split('\n').filter { it.isNotBlank() }.toSet()
+    }
+
+    @Synchronized
+    fun trustImageSender(accountKey: ByteArray, address: String) {
+        requireKey(accountKey)
+        val normalized = address.trim().lowercase().takeIf { it.contains('@') && '\n' !in it } ?: return
+        val updated = imageSenders(accountKey) + normalized
+        val sealed = Crypto.seal(accountKey, updated.sorted().joinToString("\n").toByteArray(Charsets.UTF_8), IMAGE_SENDERS_AD)
+        store.update { it.copy(sealedImageSenders = b64url(sealed)) }
+    }
+
     private fun requireKey(accountKey: ByteArray) {
         require(password(accountKey) != null) { "Wrong account key" }
     }
@@ -139,6 +155,7 @@ class Vault(private val store: AccountStore, private val now: () -> Long = Syste
 
     private companion object {
         const val PASSWORD_AD = "icloud-password"
+        const val IMAGE_SENDERS_AD = "image-senders"
     }
 }
 

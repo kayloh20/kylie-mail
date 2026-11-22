@@ -6,14 +6,12 @@ and smart filing.
 
 ## Status
 
-Signing in works: first-time setup, passkeys, recovery codes, and managing both. It doesn't show
-any mail yet. Coming next, in this order:
+Signing in and reading work: passkeys and recovery codes, folders with unread counts, the message
+list, and messages with their attachments. Coming next, in this order:
 
-1. **Reading.** Folders, the message list, and HTML email cleaned up on the server and shown in a
-   sandbox with no scripts. Remote images stay blocked until you choose to load them.
-2. **Acting on mail.** Delete, move, multi-select, right-click and the app's keyboard shortcuts.
-3. **Smart filing**, using the app's own filing code.
-4. **Writing.** Replies, forwards and new mail, in plain text only, like the app.
+1. **Acting on mail.** Delete, move, multi-select, right-click and the app's keyboard shortcuts.
+2. **Smart filing**, using the app's own filing code.
+3. **Writing.** Replies, forwards and new mail, in plain text only, like the app.
 
 ## Signing in
 
@@ -25,6 +23,24 @@ any mail yet. Coming next, in this order:
   password manager. You can make a fresh set at any time, which cancels the old ones.
 - **Sessions** end after 2 hours without use, 12 hours at most, or when the server restarts.
 - Wrong setup codes, sign-ins and recovery codes are rate limited.
+
+## Reading
+
+- **Folders, messages and the message itself**, side by side on a big screen and one at a time on
+  a phone. <kbd>↑</kbd>/<kbd>↓</kbd> or <kbd>J</kbd>/<kbd>K</kbd> move through messages, <kbd>Esc</kbd>
+  closes one, <kbd>R</kbd> refreshes. Opening a message marks it read, like the app.
+- **HTML email gets three locks.** The server strips anything active (scripts, forms, frames,
+  plugins, event handlers, refreshes, outside style sheets). The message is then shown in a
+  sandboxed frame where scripts can't run at all, under its own content security policy that
+  blocks every outside request. Links open in a new tab without telling the site where you came
+  from.
+- **Images from the internet stay hidden** until you choose *Load images*, because they can tell
+  the sender when you opened the message. *Always load from this sender* remembers your choice,
+  sealed with your account key like everything else.
+- **Attachments always download**, never open on the site, so an HTML or SVG attachment can't run
+  inside Kylie Mail.
+- **Mail comes live from iCloud** over the session's own connection, which closes when the
+  session ends. Nothing about your mail is written to the server's disk.
 
 ## How your mail is protected
 
@@ -82,11 +98,14 @@ To update: `cd /opt/kylie-mail-web && docker compose pull && docker compose up -
 
     ./gradlew -p web test
 
-To try the pages at http://localhost:8080 with a pretend iCloud (any address, password `test`):
+To try the pages at http://localhost:8080 against a pretend iCloud, a local IMAP server holding a
+few sample messages (sign up with `kylie@icloud.com` and the password `test`):
 
     ./gradlew -p web runLocal
 
 It prints the setup code. Its data goes to `web/build/local-data`; delete that folder to start over.
 
 The tests drive sign-up, sign-in and recovery end to end with a software passkey
-(`SoftwarePasskey.kt`), including phishing attempts from another site and replayed sign-ins.
+(`SoftwarePasskey.kt`), including phishing attempts from another site and replayed sign-ins, and
+read mail from a local IMAP server (`TestMail.kt`), including a newsletter that tries every trick
+in the book.
