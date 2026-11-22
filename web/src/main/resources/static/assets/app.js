@@ -266,7 +266,28 @@ async function loadIdentity() {
   $("identity-saved").textContent = "";
 }
 
+/** System, Light or Dark, as in the app; remembered in this browser only. */
+function currentTheme() {
+  try {
+    return localStorage.getItem("theme") || "system";
+  } catch {
+    return "system";
+  }
+}
+
+function setTheme(theme) {
+  try {
+    if (theme === "system") localStorage.removeItem("theme");
+    else localStorage.setItem("theme", theme);
+  } catch {
+    // Storage blocked: it still applies until the page reloads.
+  }
+  if (theme === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+}
+
 async function openSettings(scrollTo) {
+  for (const radio of document.querySelectorAll('input[name="theme"]')) radio.checked = radio.value === currentTheme();
   await Promise.all([loadSettings().catch(() => {}), loadFiling().catch(() => {}), loadIdentity().catch(() => {})]);
   if (!$("settings").open) $("settings").showModal();
   if (scrollTo) $(scrollTo).scrollIntoView({ block: "start" });
@@ -350,8 +371,12 @@ function canArchive() {
   return !!folderWithRole("archive") && chosen.length > 0 && chosen.every((m) => roleOf(m.folder) !== "archive");
 }
 
-/** Deleting from Trash, or when there's no Trash, deletes for good, as in the app. */
+/**
+ * Deleting from Trash, or when there's no Trash, deletes for good, as in the app. Until the
+ * folder list has arrived, assume there's a Trash: the server decides either way, by its own list.
+ */
 function deletesForGood() {
+  if (!mail.folders.length) return false;
   const chosen = selectedMessages();
   return !folderWithRole("trash") || (chosen.length > 0 && chosen.every((m) => roleOf(m.folder) === "trash"));
 }
@@ -360,9 +385,28 @@ async function openMailbox() {
   show("app");
   startChecking();
   loadSettings().catch(() => {});
-  await loadFolders();
-  const inbox = folderWithRole("inbox") || mail.folders[0];
-  if (inbox) await openFolder(inbox.id);
+  // The inbox doesn't wait for the folder list, whose unread counts take one request per folder.
+  mail.folders = [];
+  mail.foldersLoading = true;
+  foldersLoading();
+  const inbox = openFolder("INBOX");
+  try {
+    await loadFolders();
+    mail.foldersLoading = false;
+    renderFolders();
+    // Archive and Delete depend on which folders exist.
+    if (mail.selected.size) updateToolbar();
+    if (!folderWithRole("inbox") && mail.folders[0] && mail.folder === "INBOX") await openFolder(mail.folders[0].id);
+  } catch (e) {
+    mail.foldersLoading = false;
+    $("folder-list").replaceChildren(el("li", { className: "folders-note", textContent: `Couldn't load folders: ${e.message} Try ↻.` }));
+  }
+  await inbox;
+}
+
+function foldersLoading() {
+  $("folder-list").replaceChildren(el("li", { className: "folders-note" }, el("span", { className: "spinner" }), document.createTextNode(" Loading folders…")));
+  $("folder-select").replaceChildren(el("option", { textContent: "Loading folders…" }));
 }
 
 async function loadFolders() {
@@ -373,6 +417,8 @@ async function loadFolders() {
 function renderFolders() {
   const inbox = folderWithRole("inbox");
   document.title = inbox && inbox.unread > 0 ? `(${inbox.unread}) Kylie Mail` : "Kylie Mail";
+  // Until the list arrives, its loading message stays.
+  if (mail.foldersLoading && !mail.folders.length) return;
   const showing = mail.search ? null : mail.folder;
   $("folder-list").replaceChildren(
     ...mail.folders.map((f) => {
@@ -427,8 +473,8 @@ async function openFolder(id) {
   const token = resetList(`folder:${id}`);
   renderFolders();
   const folder = currentFolder();
-  $("folder-title").textContent = folder ? folder.name : id;
-  $("list-status").textContent = "Loading…";
+  $("folder-title").textContent = folder ? folder.name : id === "INBOX" ? "Inbox" : id;
+  $("list-status").replaceChildren(el("span", { className: "spinner" }), document.createTextNode(" Loading…"));
   try {
     const page = await api("GET", `/api/messages?folder=${encodeURIComponent(id)}`);
     if (token !== mail.loadToken) return;
@@ -1604,6 +1650,19 @@ function listenForMail() {
 }
 
 async function refresh() {
+  const button = $("refresh");
+  if (button.classList.contains("spinning")) return;
+  button.classList.add("spinning");
+  button.setAttribute("aria-busy", "true");
+  try {
+    await refreshNow();
+  } finally {
+    button.classList.remove("spinning");
+    button.removeAttribute("aria-busy");
+  }
+}
+
+async function refreshNow() {
   await loadFolders().catch(() => {});
   if (mail.search) {
     const q = mail.search.q;
@@ -1890,6 +1949,10 @@ document.addEventListener("DOMContentLoaded", () => {
     input.addEventListener("input", () => suggestFor(input));
     input.addEventListener("keydown", onAddressKey);
     input.addEventListener("blur", () => setTimeout(hideSuggest, 100));
+  }
+
+  for (const radio of document.querySelectorAll('input[name="theme"]')) {
+    radio.addEventListener("change", () => setTheme(radio.value));
   }
 
   $("identity-form").addEventListener("submit", (event) => {

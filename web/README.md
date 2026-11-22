@@ -22,10 +22,18 @@ relay).
 - **Sessions** end after 2 hours without use, 12 hours at most, or when the server restarts.
 - Wrong setup codes, sign-ins and recovery codes are rate limited.
 
+## Looks
+
+The app's own design: its palette (purple on lavender-tinted neutrals, in light and dark), the Inter
+font it ships (copied from `app/src/main/res/font` when the web server is built), its tighter
+corners and its icon. Like the app, it follows the system's light or dark setting unless you choose
+one in Settings → Appearance; that choice is kept in the browser.
+
 ## Reading
 
 - **Folders, messages and the message itself**, side by side on a big screen and one at a time on
-  a phone. Opening a message marks it read, like the app.
+  a phone. Opening a message marks it read, like the app. The inbox opens straight away, without
+  waiting for the folder list, whose unread counts take one request per folder on iCloud.
 - **New mail shows up the moment it arrives**, as in the app: while a page is open, the server keeps
   one extra iCloud connection in IMAP IDLE on your inbox, and a live stream (Server-Sent Events)
   tells the page whenever the inbox changes. The stream only ever says "the inbox changed", never

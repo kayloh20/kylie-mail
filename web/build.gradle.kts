@@ -55,6 +55,14 @@ dependencies {
     testImplementation("com.icegreen:greenmail:1.6.15") { exclude(group = "com.sun.mail") }
 }
 
+// The app's own font, so the web version looks the same; copied from the app, never duplicated.
+tasks.processResources {
+    from("../app/src/main/res/font") {
+        include("inter_*.ttf")
+        into("static/assets/fonts")
+    }
+}
+
 application {
     mainClass.set("com.kayloh20.kyliemail.web.MainKt")
     applicationName = "web"
