@@ -146,11 +146,26 @@ class MailClient(
     private val undoMs: Long = UNDO_MS,
     /** Where the folder list is remembered between sign-ins (sealed), if anywhere. */
     private val folderStore: FolderStore? = null,
+    /** How much of a message part to download per request; see [ImapConnector]. */
+    fetchSizeBytes: Int? = FETCH_SIZE_BYTES,
 ) : AutoCloseable {
-    private val connector = ImapConnector(server)
-    private val lock = Mutex()
-    private var store: IMAPStore? = null
-    private var folder: IMAPFolder? = null
+    private val connector = ImapConnector(server, fetchSizeBytes)
+    /**
+     * Two connections to iCloud, each doing one thing at a time: one for what you're waiting on
+     * (opening a message, a list, marking read), one for housekeeping (refreshing every folder's
+     * counts, smart filing catching up, gathering contacts, sending delayed deletes and copies to
+     * Sent), so housekeeping never makes you wait.
+     */
+    private class Line {
+        val lock = Mutex()
+        @Volatile var store: IMAPStore? = null
+        @Volatile var folder: IMAPFolder? = null
+    }
+    private val foreground = Line()
+    private val background = Line()
+
+    /** Which line's open folder a store belongs to. */
+    private fun lineOf(store: IMAPStore) = if (background.store === store) background else foreground
     private var passwordOverride: String? = null
     @Volatile private var knownFolders: List<FolderInfo> = emptyList()
     @Volatile private var knownAt = 0L
@@ -165,7 +180,7 @@ class MailClient(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, OpenedMessage>) = size > 20
     }
 
-    suspend fun folders(): List<FolderInfo> = run { store ->
+    suspend fun folders(): List<FolderInfo> = run(background) { store ->
         store.defaultFolder.list("*").map { it as IMAPFolder }
             .filter { f -> (f.type and Folder.HOLDS_MESSAGES) != 0 && f.attributes.none { it.equals("\\Noselect", true) || it.equals("\\NonExistent", true) } }
             .map { f ->
@@ -222,14 +237,15 @@ class MailClient(
     }
 
     /** Freshens these folders' remembered counts, as when IDLE reports a change in one. */
-    suspend fun refreshFolderCounts(folderIds: Collection<String>) = run { store -> refreshCounts(store, folderIds) }
+    suspend fun refreshFolderCounts(folderIds: Collection<String>) = run(background) { store -> refreshCounts(store, folderIds) }
 
     /** Asks iCloud for just these folders' counts, after something changed in them. */
     private fun refreshCounts(store: IMAPStore, folderIds: Collection<String>) {
         for (id in folderIds.toSet()) {
             runCatching {
-                val open = folder?.takeIf { it.fullName == id && it.isOpen }
-                val f = open ?: (store.getFolder(id) as IMAPFolder)
+                // Asked fresh (STATUS) rather than read from an open folder, which may not have
+                // caught up yet with what this connection or the other one just changed.
+                val f = store.getFolder(id) as IMAPFolder
                 rememberCounts(id, f.unreadMessageCount, f.messageCount, announce = true)
             }
         }
@@ -292,7 +308,8 @@ class MailClient(
                 list(m.getRecipients(Message.RecipientType.CC)),
                 list(m.replyTo),
                 BodyParser.parse(m),
-                m.getHeader("Message-ID")?.firstOrNull()?.trim(),
+                // From the envelope already fetched with the list, not a separate header request.
+                ((m as? MimeMessage)?.messageID ?: m.getHeader("Message-ID")?.firstOrNull())?.trim(),
             )
         }
         synchronized(opened) { opened[key] = message }
@@ -335,7 +352,7 @@ class MailClient(
     }
 
     /** Adds [message] to [folderId] with [flags], such as a copy in Sent or a saved draft. */
-    suspend fun append(folderId: String, message: MimeMessage, flags: Flags) = run { store ->
+    suspend fun append(folderId: String, message: MimeMessage, flags: Flags) = run(background) { store ->
         val f = store.getFolder(folderId)
         if (!f.exists()) throw ApiError(HttpStatusCode.NotFound, "There's no ${folderId.substringAfterLast('/')} folder.")
         message.setFlags(flags, true)
@@ -345,13 +362,13 @@ class MailClient(
     }
 
     /** Whether [folderId] holds a message with this Message-ID header. */
-    suspend fun hasMessageId(folderId: String, messageId: String): Boolean = run { store ->
+    suspend fun hasMessageId(folderId: String, messageId: String): Boolean = run(background) { store ->
         if (!store.getFolder(folderId).exists()) return@run false
         open(store, folderId).search(MessageIDTerm(messageId)).isNotEmpty()
     }
 
     /** Removes one message for good, such as a draft that has been sent or saved again. */
-    suspend fun deleteForGood(folderId: String, validity: Long, uid: Long) = run { store ->
+    suspend fun deleteForGood(folderId: String, validity: Long, uid: Long) = run(background) { store ->
         val f = open(store, folderId, validity)
         val message = f.getMessageByUID(uid) ?: return@run
         message.setFlag(Flags.Flag.DELETED, true)
@@ -379,7 +396,7 @@ class MailClient(
         )) {
             val folder = folders.find { it.role == role } ?: continue
             runCatching {
-                run { store ->
+                run(background) { store ->
                     val f = open(store, folder.id)
                     val count = f.messageCount
                     if (count < 1) return@run
@@ -480,7 +497,7 @@ class MailClient(
      * never held for long. Null if the folder is gone.
      */
     suspend fun collectExamples(folderName: String, afterUid: Long, knownValidity: Long, limit: Int): FolderSample? {
-        val (validity, count) = run { store ->
+        val (validity, count) = run(background) { store ->
             val f = store.getFolder(folderName) as IMAPFolder
             if (!f.exists()) return@run null
             val opened = open(store, folderName)
@@ -489,7 +506,7 @@ class MailClient(
         val incremental = afterUid > 0 && validity == knownValidity
         val collected = mutableListOf<MessageFeatures>()
         if (incremental) {
-            collected += run { store ->
+            collected += run(background) { store ->
                 val f = open(store, folderName, validity)
                 readFeatures(f, f.getMessagesByUID(afterUid + 1, UIDFolder.LASTUID)).filter { it.uid > afterUid }
             }
@@ -498,7 +515,7 @@ class MailClient(
             val start = maxOf(1, count - limit + 1)
             while (end >= start) {
                 val from = maxOf(start, end - CHUNK + 1)
-                collected += run { store ->
+                collected += run(background) { store ->
                     val f = open(store, folderName, validity)
                     readFeatures(f, f.getMessages(from, end))
                 }
@@ -551,7 +568,7 @@ class MailClient(
     private suspend fun send(id: String) {
         val removal = synchronized(pending) { pending.remove(id) } ?: return
         try {
-            run { store ->
+            run(background) { store ->
                 val f = open(store, removal.folder, removal.validity)
                 val messages = f.getMessagesByUID(removal.uids.toLongArray()).filterNotNull().toTypedArray()
                 if (messages.isEmpty()) return@run
@@ -569,7 +586,7 @@ class MailClient(
                 if (store.hasCapability("UIDPLUS")) f.expunge(messages) else f.expunge()
             }
             // Only the two folders involved need fresh counts.
-            run { store -> refreshCounts(store, listOfNotNull(removal.folder, removal.target)) }
+            run(background) { store -> refreshCounts(store, listOfNotNull(removal.folder, removal.target)) }
         } catch (e: Exception) {
             System.err.println("Couldn't send a change to iCloud: ${e::class.simpleName}")
         }
@@ -586,9 +603,14 @@ class MailClient(
     }
 
     override fun close() {
-        val s = store
-        store = null
-        folder = null
+        close(foreground)
+        close(background)
+    }
+
+    private fun close(line: Line) {
+        val s = line.store
+        line.store = null
+        line.folder = null
         s?.let(connector::kill)
     }
 
@@ -613,33 +635,36 @@ class MailClient(
         }
     }
 
-    /** Runs [block] on the IMAP connection, reconnecting once if it had dropped. */
-    private suspend fun <T> run(block: (IMAPStore) -> T): T = lock.withLock {
+    /** Runs [block] on one of the IMAP connections (the foreground one unless told), reconnecting once if it had dropped. */
+    private suspend fun <T> run(line: Line = foreground, block: (IMAPStore) -> T): T = line.lock.withLock {
         withContext(Dispatchers.IO) {
             try {
-                block(connected())
+                block(connected(line))
             } catch (e: ApiError) {
                 throw e
             } catch (e: Exception) {
                 if (!droppedConnection(e)) throw translate(e)
-                close()
+                close(line)
                 try {
-                    block(connected())
+                    block(connected(line))
                 } catch (e: ApiError) {
                     throw e
                 } catch (e: Exception) {
-                    close()
+                    close(line)
                     throw translate(e)
                 }
             }
         }
     }
 
-    private fun connected(): IMAPStore {
-        store?.takeIf { it.isConnected }?.let { return it }
-        close()
+    private fun connected(line: Line): IMAPStore {
+        // No "are you there?" before every request: checking costs a round trip, and after a quiet
+        // minute a whole new login. A connection that has dropped fails the request instead, and
+        // run() then reconnects and tries again once.
+        line.store?.let { return it }
+        close(line)
         val pw = passwordOverride ?: password() ?: throw ApiError(HttpStatusCode.Unauthorized, "Sign in again.")
-        return connector.connect(username, pw).also { store = it }
+        return connector.connect(username, pw).also { line.store = it }
     }
 
     private fun droppedConnection(e: Exception) = e is FolderClosedException || e is StoreClosedException ||
@@ -651,15 +676,20 @@ class MailClient(
     }
 
     private fun open(store: IMAPStore, folderId: String, validity: Long? = null): IMAPFolder {
-        val current = folder
+        val line = lineOf(store)
+        val current = line.folder
         val f = if (current != null && current.fullName == folderId && current.isOpen) {
             current
         } else {
             runCatching { current?.close(false) }
             val next = store.getFolder(folderId) as IMAPFolder
-            if (!next.exists()) throw ApiError(HttpStatusCode.NotFound, "That folder doesn't exist any more.")
-            next.open(Folder.READ_WRITE)
-            folder = next
+            // Opening says when a folder is gone; asking first would cost another round trip.
+            try {
+                next.open(Folder.READ_WRITE)
+            } catch (e: javax.mail.FolderNotFoundException) {
+                throw ApiError(HttpStatusCode.NotFound, "That folder doesn't exist any more.")
+            }
+            line.folder = next
             next
         }
         if (validity != null && f.uidValidity != validity) throw ApiError(HttpStatusCode.Conflict, "This folder changed on the server. Reload it.")
@@ -712,6 +742,12 @@ class MailClient(
         const val MAX_DOWNLOAD = 60L * 1024 * 1024
         /** How long a removal waits before going to iCloud, as in the app. */
         const val UNDO_MS = 6_000L
+
+        /**
+         * Download message parts in 4 MB pieces instead of the mail library's 16 KB: a 3 MB photo
+         * is then one round trip to iCloud instead of about 250.
+         */
+        const val FETCH_SIZE_BYTES = 4 * 1024 * 1024
 
         /** How many listed messages' senders and subjects a session keeps for suggestions. */
         private const val FEATURE_CACHE_SIZE = 5000

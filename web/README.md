@@ -60,8 +60,11 @@ one in Settings → Appearance; that choice is kept in the browser.
   sealed with your account key like everything else.
 - **Attachments always download**, never open on the site, so an HTML or SVG attachment can't run
   inside Kylie Mail.
-- **Mail comes live from iCloud** over the session's own connection, which closes when the
-  session ends. The only things about your mail kept on the server's disk are sealed with your
+- **Mail comes live from iCloud** over the session's own connections, which close when the
+  session ends: one for what you click, and one for work in the background (refreshing folder
+  counts, smart filing's learning, sending changes once undo has passed), so opening a message
+  never waits behind it. Message parts download in 4 MB pieces rather than the mail library's
+  16 KB, so a message with photos takes a handful of round trips to iCloud instead of hundreds. The only things about your mail kept on the server's disk are sealed with your
   account key: the folder list, smart filing's memory and the senders you load images from.
 
 ## Acting on mail

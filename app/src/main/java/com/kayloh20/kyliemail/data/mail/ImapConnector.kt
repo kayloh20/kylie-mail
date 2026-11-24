@@ -11,7 +11,14 @@ import javax.mail.Session
 import javax.net.SocketFactory
 import javax.net.ssl.SSLSocketFactory
 
-class ImapConnector(private val server: ServerConfig = ServerConfig.ICLOUD) {
+class ImapConnector(
+    private val server: ServerConfig = ServerConfig.ICLOUD,
+    /**
+     * How much of a message part to ask for at a time. Left unset, the mail library's default
+     * (16 KB) applies; over a slow link that's one round trip per 16 KB of every image.
+     */
+    private val fetchSizeBytes: Int? = null,
+) {
 
     /** Every socket each store has opened, so [kill] can cut them all at once. */
     private val sockets = Collections.synchronizedMap(WeakHashMap<IMAPStore, MutableList<Socket>>())
@@ -81,6 +88,7 @@ class ImapConnector(private val server: ServerConfig = ServerConfig.ICLOUD) {
         put("$p.connectionpooltimeout", "60000")
         // Reading a message must never mark it read on the server by itself.
         put("$p.peek", "true")
+        fetchSizeBytes?.let { put("$p.fetchsize", it.toString()) }
     }
 
     companion object {

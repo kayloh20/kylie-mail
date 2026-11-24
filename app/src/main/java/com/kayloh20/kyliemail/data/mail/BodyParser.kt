@@ -1,10 +1,12 @@
 package com.kayloh20.kyliemail.data.mail
 
 import java.io.ByteArrayOutputStream
+import java.util.IdentityHashMap
 import java.util.Locale
 import javax.mail.Multipart
 import javax.mail.Part
 import javax.mail.internet.ContentType
+import javax.mail.internet.MimePart
 import javax.mail.internet.MimeUtility
 
 /** A file in a message. [path] is its IMAP section number ("2", "1.3"), used to download it later. */
@@ -45,15 +47,19 @@ object BodyParser {
         data class Card(val attachment: AttachmentInfo) : Segment
     }
 
-    private class Walk(val preferHtml: Boolean) {
+    /** [texts] is shared between walks, so each text part is downloaded once, not once per walk. */
+    private class Walk(val preferHtml: Boolean, val texts: MutableMap<Part, String?> = IdentityHashMap()) {
         val segments = mutableListOf<Segment>()
         val attachments = mutableListOf<AttachmentInfo>()
         val images = mutableListOf<InlinePart>()
+
+        fun text(part: Part): String? = if (part in texts) texts[part] else readText(part).also { texts[part] = it }
     }
 
     fun parse(root: Part): ParsedBody {
-        val rich = Walk(preferHtml = true).also { walk(root, "", it, inBody = true) }
-        val plain = Walk(preferHtml = false).also { walk(root, "", it, inBody = true, collectFiles = false) }
+        val texts = IdentityHashMap<Part, String?>()
+        val rich = Walk(preferHtml = true, texts).also { walk(root, "", it, inBody = true) }
+        val plain = Walk(preferHtml = false, texts).also { walk(root, "", it, inBody = true, collectFiles = false) }
 
         val hasHtml = rich.segments.any { it is Segment.Html }
         val onlyText = rich.segments.all { it is Segment.Text }
@@ -125,8 +131,8 @@ object BodyParser {
                     else -> children.forEach { (child, childPath) -> walk(child, childPath, w, inBody, collectFiles) }
                 }
             }
-            !isAttachment && filename == null && type == "text/html" -> readText(part)?.let { w.segments += Segment.Html(it) }
-            !isAttachment && filename == null && type == "text/plain" -> readText(part)?.let { w.segments += Segment.Text(it) }
+            !isAttachment && filename == null && type == "text/html" -> w.text(part)?.let { w.segments += Segment.Html(it) }
+            !isAttachment && filename == null && type == "text/plain" -> w.text(part)?.let { w.segments += Segment.Text(it) }
             else -> {
                 if (!collectFiles) {
                     if (inBody && disposition != Part.ATTACHMENT) w.segments += Segment.Card(info(part, path, type, filename, inBody = true))
@@ -184,8 +190,9 @@ object BodyParser {
 
     private fun info(part: Part, path: String, type: String, filename: String?, inBody: Boolean): AttachmentInfo {
         val encoded = runCatching { part.size.toLong() }.getOrDefault(-1L).coerceAtLeast(0)
-        val base64 = runCatching { part.getHeader("Content-Transfer-Encoding")?.firstOrNull() }.getOrNull()
-            ?.trim()?.equals("base64", ignoreCase = true) == true
+        // From the message structure the server already sent, rather than fetching the part's headers.
+        val encoding = runCatching { (part as? MimePart)?.encoding ?: part.getHeader("Content-Transfer-Encoding")?.firstOrNull() }.getOrNull()
+        val base64 = encoding?.trim()?.equals("base64", ignoreCase = true) == true
         return AttachmentInfo(
             path = path.ifEmpty { "1" },
             filename = filename ?: defaultName(type),
@@ -211,8 +218,10 @@ object BodyParser {
         ?.let { runCatching { MimeUtility.decodeText(it) }.getOrDefault(it) }
         ?.trim()?.takeIf { it.isNotEmpty() }
 
+    /** From the message structure the server already sent (IMAP), or the part's own header. */
     private fun contentId(part: Part): String? =
-        runCatching { part.getHeader("Content-ID")?.firstOrNull() }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+        runCatching { (part as? MimePart)?.contentID ?: part.getHeader("Content-ID")?.firstOrNull() }.getOrNull()
+            ?.trim()?.takeIf { it.isNotEmpty() }
 
     private fun contains(part: Part, type: String): Boolean {
         val own = mimeType(part)
