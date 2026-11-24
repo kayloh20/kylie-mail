@@ -1078,6 +1078,8 @@ async function removeSelected(action, target = null) {
     mail.messages.slice(0, items[0].index).reverse().find((m) => !mail.selected.has(m.key));
 
   mail.messages = mail.messages.filter((m) => !mail.selected.has(m.key));
+  // A refresh already on its way was read before this and would bring these back.
+  mail.removals = (mail.removals || 0) + 1;
   mail.selected.clear();
   mail.anchor = null;
   mail.cursor = next ? next.key : null;
@@ -1665,10 +1667,11 @@ function onKey(event) {
  */
 async function softRefresh({ background = false } = {}) {
   const token = mail.loadToken;
+  const removals = mail.removals || 0;
   try {
     if (mail.search) return;
     const page = await api("GET", `/api/messages?folder=${encodeURIComponent(mail.folder)}`, undefined, { background });
-    if (token !== mail.loadToken || mail.busy) return;
+    if (token !== mail.loadToken || mail.busy || (mail.removals || 0) !== removals) return;
     const fresh = page.messages.map((m) => tag(page.folder, page.validity, m));
     const newest = new Set(fresh.map((m) => m.key));
     const oldestShown = Math.min(...fresh.map((m) => m.uid));

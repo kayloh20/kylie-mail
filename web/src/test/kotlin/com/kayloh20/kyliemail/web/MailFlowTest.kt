@@ -251,6 +251,26 @@ class MailFlowTest {
     }
 
     @Test
+    fun messagesStayGoneWhileTheirRemovalIsOnItsWay() = server(undoMs = 200) {
+        val inbox = inbox()
+        val mom = inbox.messages.first { it.subject == "Dinner Sunday?" }
+        val reached = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        services.sessions.get(token, touch = false)!!.mail!!.beforeSending = {
+            reached.countDown()
+            release.await(10, java.util.concurrent.TimeUnit.SECONDS)
+        }
+        remove(inbox, listOf(mom.uid), "move", "Receipts").read(Removal.serializer())
+        assertTrue(kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { reached.await(10, java.util.concurrent.TimeUnit.SECONDS) })
+
+        // Too late to undo, not yet done in iCloud: lists still leave it out.
+        assertTrue("Dinner Sunday?" !in inbox().messages.map { it.subject })
+        release.countDown()
+        eventually("it reaches Receipts") { "Dinner Sunday?" in subjects("Receipts") }
+        assertTrue("Dinner Sunday?" !in inbox().messages.map { it.subject })
+    }
+
+    @Test
     fun movingAndDeletingForGood() = server {
         val inbox = inbox()
         val mom = inbox.messages.first { it.subject == "Dinner Sunday?" }

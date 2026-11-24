@@ -101,6 +101,8 @@ private class PendingRemoval(
     val target: String?,
     val unseen: Int,
     var job: Job? = null,
+    /** On its way to iCloud: too late to undo, but still hidden from lists until it's done. */
+    var sending: Boolean = false,
 )
 
 @Serializable data class SearchHit(val folder: String, val validity: Long, val summary: MessageSummary)
@@ -176,6 +178,9 @@ class MailClient(
     val folderChanges: SharedFlow<Unit> = _folderChanges.asSharedFlow()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val pending = LinkedHashMap<String, PendingRemoval>()
+
+    /** For tests: runs just before a removal reaches iCloud, to hold it there. */
+    internal var beforeSending: () -> Unit = {}
     private val opened = object : LinkedHashMap<String, OpenedMessage>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, OpenedMessage>) = size > 20
     }
@@ -544,7 +549,8 @@ class MailClient(
 
     /** Takes back a removal that hasn't been sent yet. False once it has. */
     fun undo(id: String): Boolean = synchronized(pending) {
-        val removal = pending.remove(id) ?: return false
+        val removal = pending[id]?.takeIf { !it.sending } ?: return false
+        pending.remove(id)
         removal.job?.cancel()
         true
     }
@@ -566,9 +572,12 @@ class MailClient(
 
     /** Sends a waiting removal to iCloud now. */
     private suspend fun send(id: String) {
-        val removal = synchronized(pending) { pending.remove(id) } ?: return
+        // Stays listed as leaving until iCloud has done it: lists load over the other connection
+        // meanwhile, and would otherwise show these messages again until the next refresh.
+        val removal = synchronized(pending) { pending[id]?.takeIf { !it.sending }?.also { it.sending = true } } ?: return
         try {
             run(background) { store ->
+                beforeSending()
                 val f = open(store, removal.folder, removal.validity)
                 val messages = f.getMessagesByUID(removal.uids.toLongArray()).filterNotNull().toTypedArray()
                 if (messages.isEmpty()) return@run
@@ -585,10 +594,14 @@ class MailClient(
                 // Without UIDPLUS, expunging can only clear every deleted message in the folder.
                 if (store.hasCapability("UIDPLUS")) f.expunge(messages) else f.expunge()
             }
+            synchronized(pending) { pending.remove(id) }
             // Only the two folders involved need fresh counts.
             run(background) { store -> refreshCounts(store, listOfNotNull(removal.folder, removal.target)) }
         } catch (e: Exception) {
             System.err.println("Couldn't send a change to iCloud: ${e::class.simpleName}")
+        } finally {
+            // If it failed, the messages are still there and show again.
+            synchronized(pending) { pending.remove(id) }
         }
         synchronized(opened) { opened.keys.removeIf { it.startsWith("${removal.folder}\u0000") } }
     }
